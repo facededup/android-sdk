@@ -30,6 +30,8 @@ import org.json.JSONObject
 data class FacededupConfig(
     val baseUrl: String,
     val password: String? = null,
+    /** Per-tenant license key (fdk_…) — production replacement for the demo password. */
+    val licenseKey: String? = null,
     val subjectId: String? = null,
     /** GCP project number for Play Integrity device attestation (Annex A3e).
      *  When set, the flow mints a hardware attestation token bound to the
@@ -64,6 +66,7 @@ data class FacededupConfig(
         showSettings?.let { p.add("settings" to if (it) "1" else "0") }
         showBack?.let { p.add("back" to if (it) "1" else "0") }
         add("product", productName); add("color", primaryColor)
+        add("license", licenseKey)
         return p.joinToString("&") { (k, v) -> "$k=" + android.net.Uri.encode(v) }
     }
 }
