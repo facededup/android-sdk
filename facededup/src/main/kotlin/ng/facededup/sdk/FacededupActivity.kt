@@ -67,9 +67,8 @@ class FacededupActivity : AppCompatActivity() {
             // Always fetch the hosted flow fresh. A cached page can otherwise pin a
             // device to an OLD build of the flow (the WebView HTTP cache survives
             // app force-close), so updates we ship server-side never reach it.
-            cacheMode = WebSettings.LOAD_NO_CACHE
+            cacheMode = WebSettings.LOAD_DEFAULT   // cache heavy static assets (WASM/model/fonts); the _cb param keeps the HTML fresh
         }
-        web.clearCache(true)   // drop any previously-cached (stale) flow on launch
         web.addJavascriptInterface(Bridge(), "FacededupNative")
         web.webChromeClient = object : WebChromeClient() {
             override fun onPermissionRequest(request: PermissionRequest) {
