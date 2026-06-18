@@ -16,7 +16,7 @@ plugins {
 }
 
 group = "ng.facededup"
-version = "1.0.6"
+version = "1.0.7"
 
 android {
     namespace = "ng.facededup.sdk"
@@ -42,6 +42,9 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.7.0")
     // Device attestation (Annex A3e): Play Integrity token bound to the challenge nonce.
     implementation("com.google.android.play:integrity:1.4.0")
+    // Native on-device face detection (hybrid): SAME FaceLandmarker model as the web
+    // flow, so signals match processLandmarks() exactly. Runs natively (no WASM).
+    implementation("com.google.mediapipe:tasks-vision:0.10.14")
 }
 
 publishing {
@@ -49,7 +52,7 @@ publishing {
         register<MavenPublication>("release") {
             groupId = "ng.facededup"
             artifactId = "facededup"
-            version = "1.0.6"
+            version = "1.0.7"
             afterEvaluate { from(components["release"]) }
             pom {
                 name.set("Facededup Android SDK")

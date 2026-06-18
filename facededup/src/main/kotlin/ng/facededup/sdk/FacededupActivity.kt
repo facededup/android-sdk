@@ -43,6 +43,8 @@ class FacededupActivity : AppCompatActivity() {
     private var password: String? = null
     private var cloudProjectNumber: Long = 0L
     private var done = false
+    private var detector: FacededupMpDetector? = null
+    private val detectExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
 
     private val cameraPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { loadFlow() }
@@ -70,6 +72,11 @@ class FacededupActivity : AppCompatActivity() {
             cacheMode = WebSettings.LOAD_DEFAULT   // cache heavy static assets (WASM/model/fonts); the _cb param keeps the HTML fresh
         }
         web.addJavascriptInterface(Bridge(), "FacededupNative")
+        // Native MediaPipe Tasks detection (hybrid): init the engine and, if it's ready,
+        // expose the FacededupDetect bridge. loadFlow() then passes ?native=mp so the
+        // hosted flow routes detection here instead of running the WASM Worker.
+        detector = FacededupMpDetector(applicationContext)
+        web.addJavascriptInterface(DetectBridge(), "FacededupDetect")
         web.webChromeClient = object : WebChromeClient() {
             override fun onPermissionRequest(request: PermissionRequest) {
                 runOnUiThread { request.grant(request.resources) }   // camera + mic
@@ -103,8 +110,11 @@ class FacededupActivity : AppCompatActivity() {
         // Cache-bust: a unique param per launch forces the WebView to fetch the
         // current hosted flow instead of serving a stale cached copy.
         val cb = "_cb=" + System.currentTimeMillis()
+        // Tell the flow to use native MediaPipe detection (only if the engine started;
+        // otherwise it falls back to the bundled WASM Worker automatically).
+        val nativeFlag = if (detector?.isReady == true) "&native=mp" else ""
         val query = if (params.isEmpty()) cb else "$params&$cb"
-        val url = "$base/demo/?$query"
+        val url = "$base/demo/?$query$nativeFlag"
         web.loadUrl(url)
     }
 
@@ -128,6 +138,8 @@ class FacededupActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        runCatching { detectExecutor.shutdownNow() }
+        runCatching { detector?.close() }
         runCatching { (web.parent as? ViewGroup)?.removeView(web); web.destroy() }
         super.onDestroy()
     }
@@ -173,5 +185,23 @@ class FacededupActivity : AppCompatActivity() {
         /** Called by the web flow before /verify; replies via __onFacededupAttestation. */
         @JavascriptInterface
         fun requestAttestation(nonce: String) { runOnUiThread { requestPlayIntegrity(nonce) } }
+    }
+
+    /** Native-detection bridge: the flow ships a base64 JPEG per frame; we run MediaPipe
+     *  off the UI thread and reply via window.__facededupPose(json). */
+    private inner class DetectBridge {
+        @JavascriptInterface
+        fun detect(jpegBase64: String) {
+            val d = detector ?: return
+            runCatching {
+                detectExecutor.execute {
+                    val json = d.detect(jpegBase64)
+                    web.post {
+                        web.evaluateJavascript(
+                            "window.__facededupPose && window.__facededupPose($json)", null)
+                    }
+                }
+            }
+        }
     }
 }
