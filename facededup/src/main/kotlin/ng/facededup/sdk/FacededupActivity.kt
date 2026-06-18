@@ -64,8 +64,12 @@ class FacededupActivity : AppCompatActivity() {
             domStorageEnabled = true
             mediaPlaybackRequiresUserGesture = false           // camera can auto-start
             mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
-            cacheMode = WebSettings.LOAD_DEFAULT
+            // Always fetch the hosted flow fresh. A cached page can otherwise pin a
+            // device to an OLD build of the flow (the WebView HTTP cache survives
+            // app force-close), so updates we ship server-side never reach it.
+            cacheMode = WebSettings.LOAD_NO_CACHE
         }
+        web.clearCache(true)   // drop any previously-cached (stale) flow on launch
         web.addJavascriptInterface(Bridge(), "FacededupNative")
         web.webChromeClient = object : WebChromeClient() {
             override fun onPermissionRequest(request: PermissionRequest) {
@@ -97,7 +101,11 @@ class FacededupActivity : AppCompatActivity() {
         val base = (intent.getStringExtra(EXTRA_BASE_URL) ?: "").trimEnd('/')
         if (base.isEmpty()) { finish(); return }
         val params = intent.getStringExtra(EXTRA_PARAMS).orEmpty()
-        val url = if (params.isEmpty()) "$base/demo/" else "$base/demo/?$params"
+        // Cache-bust: a unique param per launch forces the WebView to fetch the
+        // current hosted flow instead of serving a stale cached copy.
+        val cb = "_cb=" + System.currentTimeMillis()
+        val query = if (params.isEmpty()) cb else "$params&$cb"
+        val url = "$base/demo/?$query"
         web.loadUrl(url)
     }
 
