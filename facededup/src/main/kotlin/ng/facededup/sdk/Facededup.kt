@@ -53,9 +53,15 @@ data class FacededupConfig(
     /** Show the in-flow back button. Defaults to **false** — the SDK has no menu
      *  to return to. Set true if you embed it inside your own navigation. */
     val showBack: Boolean? = false,
-    /** Branding: product name and brand colour (hex, e.g. "#0a3d62"). */
+    /** Branding / theme: product name and brand/accent colour (hex, e.g. "#0a3d62"). */
     val productName: String? = null,
     val primaryColor: String? = null,
+    /** Theme: UI / font scale (e.g. 1.15 = 15% larger). 1.0 = default. */
+    val fontScale: Double? = null,
+    /** Theme: body text colour (hex). */
+    val textColor: String? = null,
+    /** Theme: background colour (hex). */
+    val backgroundColor: String? = null,
 ) {
     /** Launch options → URL query the web flow reads (`_urlConfig` in the demo). */
     internal fun toQuery(): String {
@@ -66,6 +72,8 @@ data class FacededupConfig(
         showSettings?.let { p.add("settings" to if (it) "1" else "0") }
         showBack?.let { p.add("back" to if (it) "1" else "0") }
         add("product", productName); add("color", primaryColor)
+        fontScale?.let { add("fontScale", it.toString()) }
+        add("textColor", textColor); add("bg", backgroundColor)
         add("license", licenseKey)
         return p.joinToString("&") { (k, v) -> "$k=" + android.net.Uri.encode(v) }
     }
