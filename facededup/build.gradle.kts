@@ -16,13 +16,13 @@ plugins {
 }
 
 group = "ng.facededup"
-version = "1.0.8"
+version = "1.0.9"
 
 android {
     namespace = "ng.facededup.sdk"
     compileSdk = 35
     defaultConfig {
-        minSdk = 24
+        minSdk = 21
     }
     buildFeatures { buildConfig = false }
     compileOptions {
@@ -43,8 +43,13 @@ dependencies {
     // Device attestation (Annex A3e): Play Integrity token bound to the challenge nonce.
     implementation("com.google.android.play:integrity:1.4.0")
     // Native on-device face detection (hybrid): SAME FaceLandmarker model as the web
-    // flow, so signals match processLandmarks() exactly. Runs natively (no WASM).
-    implementation("com.google.mediapipe:tasks-vision:0.10.14")
+    // flow, so signals match processLandmarks() exactly. OPTIONAL — compileOnly so it
+    // is NOT forced on every integrator (it would otherwise raise their minSdk to 24
+    // and add ~15MB of native libs). Integrators who want native detection add
+    // `implementation("com.google.mediapipe:tasks-vision:0.10.14")` themselves; the SDK
+    // probes for it at runtime (Class.forName) and falls back to the bundled WASM engine
+    // when it's absent, so a missing dependency never crashes the host app.
+    compileOnly("com.google.mediapipe:tasks-vision:0.10.14")
 }
 
 publishing {
@@ -52,7 +57,7 @@ publishing {
         register<MavenPublication>("release") {
             groupId = "ng.facededup"
             artifactId = "facededup"
-            version = "1.0.8"
+            version = "1.0.9"
             afterEvaluate { from(components["release"]) }
             pom {
                 name.set("Facededup Android SDK")

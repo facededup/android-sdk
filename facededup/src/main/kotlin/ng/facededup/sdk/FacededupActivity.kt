@@ -72,10 +72,19 @@ class FacededupActivity : AppCompatActivity() {
             cacheMode = WebSettings.LOAD_DEFAULT   // cache heavy static assets (WASM/model/fonts); the _cb param keeps the HTML fresh
         }
         web.addJavascriptInterface(Bridge(), "FacededupNative")
-        // Native MediaPipe Tasks detection (hybrid): init the engine and, if it's ready,
-        // expose the FacededupDetect bridge. loadFlow() then passes ?native=mp so the
-        // hosted flow routes detection here instead of running the WASM Worker.
-        detector = FacededupMpDetector(applicationContext)
+        // Native MediaPipe Tasks detection is OPTIONAL. Probe for the tasks-vision class
+        // WITHOUT referencing it directly — if the integrator didn't add the dependency,
+        // constructing FacededupMpDetector (which references FaceLandmarker) would throw
+        // NoClassDefFoundError at class-load, BEFORE any try/catch inside it can run, and
+        // crash the host app. So gate construction on Class.forName and silently fall back
+        // to the bundled WASM engine when MediaPipe isn't present. loadFlow() passes
+        // ?native=mp only when the detector actually started.
+        detector = try {
+            Class.forName("com.google.mediapipe.tasks.vision.facelandmarker.FaceLandmarker")
+            FacededupMpDetector(applicationContext)
+        } catch (t: Throwable) {
+            null   // tasks-vision not on the classpath → use the bundled WASM detection
+        }
         web.addJavascriptInterface(DetectBridge(), "FacededupDetect")
         web.webChromeClient = object : WebChromeClient() {
             override fun onPermissionRequest(request: PermissionRequest) {
