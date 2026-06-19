@@ -92,6 +92,10 @@
       background:var(--brand-soft); display:flex; align-items:center; justify-content:center;
       border:1px solid #d6e4e4; }
     .micmeter.heard{ background:#dcfce7; border-color:#bbf7d0; }
+    .micmeter.quiet{ background:#fef3c7; border-color:#fde68a; }
+    .micmeter.quiet .mm-fill{ background:linear-gradient(90deg, rgba(217,119,6,.22), rgba(245,158,11,.34)); }
+    .micmeter.quiet .mm-eq i{ background:#d97706; }
+    .micmeter.quiet .mm-text{ color:#b45309; }
     .mm-fill{ position:absolute; left:0; top:0; bottom:0; width:0%;
       background:linear-gradient(90deg, rgba(15,88,91,.30), rgba(42,143,134,.42));
       transition:width .07s linear; }
@@ -1460,7 +1464,7 @@
   }
   // ---- smart mic meter: live volume bar + voice-activity auto-advance ----
   function showMic(label){ $("mm-text").textContent = label || "Listening…";
-    $("mm-fill").style.width = "0%"; $("micmeter").classList.remove("heard");
+    $("mm-fill").style.width = "0%"; $("micmeter").classList.remove("heard","quiet");
     $("start").style.display = "none"; $("micmeter").style.display = "flex"; }
   function hideMic(){ $("micmeter").style.display = "none"; }
 
@@ -1475,19 +1479,38 @@
     const src = ctx.createMediaStreamSource(stream);
     const an = ctx.createAnalyser(); an.fftSize = 512; an.smoothingTimeConstant = 0.6; src.connect(an);
     const buf = new Uint8Array(an.fftSize);
-    let raf = 0, spoke = false, voiced = 0, quietSince = 0, peak = 0;
+    let raf = 0, spoke = false, voiced = 0, quietSince = 0, peak = 0, peakMax = 0;
+    const t0 = performance.now();
+    let lastText = "";
+    // Update the status line only on change (no per-frame thrash), and speak the
+    // important coaching cues once so it feels responsive, not chatty.
+    let coached = "";
+    function say(t, voice){
+      if(t === lastText) return; lastText = t; $("mm-text").textContent = t;
+      if(voice && voice !== coached){ coached = voice; try{ speak(voice); }catch(_){} }
+    }
     function tick(){
       an.getByteTimeDomainData(buf);
       let sum = 0; for(let i=0;i<buf.length;i++){ const v=(buf[i]-128)/128; sum += v*v; }
       const lvl = Math.min(1, Math.sqrt(sum/buf.length) * 3.4);
       peak = Math.max(lvl, peak*0.92);
+      peakMax = Math.max(peakMax, peak);
       fill.style.width = (peak*100).toFixed(1) + "%";
       const t = performance.now();
       for(let i=0;i<eqs.length;i++)
         eqs[i].style.height = (6 + peak*22*(0.55 + 0.45*Math.abs(Math.sin(t/90 + i)))).toFixed(0) + "px";
       if(lvl > 0.2){ voiced++; quietSince = 0;
-        if(voiced > 4 && !spoke){ spoke = true; box.classList.add("heard"); $("mm-text").textContent = "Heard you ✓"; } }
-      else if(spoke){ if(!quietSince) quietSince = t; else if(t - quietSince > 800) settledRes(); }
+        if(voiced > 4 && !spoke){ spoke = true; box.classList.add("heard"); box.classList.remove("quiet"); }
+        // Coach the level while they read: latch positive once they're loud enough
+        // (peakMax only grows), so it never flickers back to "louder".
+        if(spoke) say(peakMax >= 0.40 ? "🎙 I can hear you — keep going" : "🔈 A little louder…",
+                      peakMax >= 0.40 ? "" : "A little louder");
+      }
+      else {
+        if(spoke){ if(!quietSince) quietSince = t; else { say("✓ Got it"); if(t - quietSince > 800) settledRes(); } }
+        // Never picked up a voice — nudge after a beat (bad mic, muted, too far).
+        else if(t - t0 > 1800){ box.classList.add("quiet"); say("🔇 We can't hear you — speak up", "We can't hear you. Please speak up."); }
+      }
       raf = requestAnimationFrame(tick);
     }
     raf = requestAnimationFrame(tick);
@@ -2035,16 +2058,25 @@
             // OFFLINE: hand the captured frames to the native SDK for DEFERRED submit
             // (/v1/offline/submit on reconnect). The verdict is delivered to the
             // tenant's webhook. We return a "queued" result so the app knows it's pending.
-            if(window.FacededupNative && window.FacededupNative.queueOffline){
+            // Native bridge: Android = FacededupNative.queueOffline(json); iOS =
+            // webkit.messageHandlers.facededupQueueOffline.postMessage(json).
+            const _android = window.FacededupNative && window.FacededupNative.queueOffline;
+            const _ios = window.webkit && window.webkit.messageHandlers
+                         && window.webkit.messageHandlers.facededupQueueOffline;
+            if(_android || _ios){
               const txn = "off_"+Date.now()+"_"+Math.floor(Math.random()*1e6);
-              try{ window.FacededupNative.queueOffline(JSON.stringify({
+              const payload = JSON.stringify({
                 subject_id: $("subject").value || "user",
                 method: chosenMethod || "face_liveness",
                 client_actions: (challenge && challenge.actions) || [],
                 client_txn_id: txn,
                 captured_at: new Date().toISOString(),
                 frames: (frames||[]).map(f => ({ image_b64: f.image_b64, proves_action: f.proves_action || null })),
-              })); }catch(_e){}
+              });
+              try{
+                if(_android) window.FacededupNative.queueOffline(payload);
+                else window.webkit.messageHandlers.facededupQueueOffline.postMessage(payload);
+              }catch(_e){}
               result = { outcome:"queued", is_live:null, score:null, client_txn_id:txn,
                          queued_offline:true, selfie_image:null, liveliness_images:[] };
             } else { throw new Error("__OFFLINE__"); }
