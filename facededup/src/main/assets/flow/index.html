@@ -1093,6 +1093,20 @@
 
   // ---- MediaPipe (client-side detection) --------------------------------
   let landmarker = null, latest = null, looping = false;
+  // NEUTRAL head-pitch baseline. Phones sit BELOW the face, so a user's resting
+  // ("neutral") pitch is not 0 — it's biased negative. Judging look up/down on the
+  // ABSOLUTE pitch therefore makes look_down nearly impossible and look_up trigger on
+  // the baseline. We track the resting pitch (EMA, only when horizontally frontal and
+  // NOT mid up/down action, ignoring big deflections) and judge up/down as a DELTA.
+  let neutralPitch = null, _verticalActive = false;
+  function trackNeutralPitch(f){
+    if(_verticalActive || !f || !f.face || !f.pose) return;
+    if(Math.abs(f.pose.yaw||0) > 16) return;            // only when horizontally frontal
+    const p = f.pose.pitch||0;
+    if(neutralPitch == null){ neutralPitch = p; return; }
+    if(Math.abs(p - neutralPitch) < 8) neutralPitch += (p - neutralPitch) * 0.05; // ignore the actual look
+  }
+  function pitchDelta(f){ return (f?.pose?.pitch||0) - (neutralPitch||0); }
   // Preload the engine in the background (during method-select / consent) so it's
   // ready by capture time — the user never waits on a "loading" message.
   let mpPromise = null;
@@ -1187,6 +1201,7 @@
     if(e.data.type!=='result') return;
     workerBusy = false;
     latest = e.data.res ? processLandmarks(e.data.res) : { face:false };
+    trackNeutralPitch(latest);
     collectMotion(performance.now());
   }
   let _mpWorkerPromise = null;
@@ -1242,6 +1257,7 @@
         if(Math.abs(latest.pose.yaw)<=12 && Math.abs(latest.pose.pitch)<=12 && latest.coverage>0.35)
           lastFaceAttrs = latest.attrs;
       } else { latest = { face:false }; }
+      trackNeutralPitch(latest);
       collectMotion(performance.now());
     };
   }
@@ -1403,7 +1419,7 @@
             .catch(() => { workerBusy = false; });
         }
       } else {
-        _lastDet = t; latest = readFrame() || latest; collectMotion(t);   // main-thread mode
+        _lastDet = t; latest = readFrame() || latest; trackNeutralPitch(latest); collectMotion(t);   // main-thread mode
       }
     }
     requestAnimationFrame(loop); }
@@ -1552,9 +1568,13 @@
     // face width is a clear, comfortable turn (loosened for reliable detection).
     if(action==="turn_left") return Math.max(0,-(f.noseOff||0)) / 0.07;
     if(action==="turn_right") return Math.max(0,(f.noseOff||0)) / 0.07;
-    if(action==="look_up") return Math.max(0,-(f.pose?.pitch||0)) / 9;  // up = pitch-
-    if(action==="look_down") return Math.max(0,(f.pose?.pitch||0)) / 9; // down = pitch+
-    if(action==="nod") return Math.max(0,f.pose.pitch) / 14;   // nod = look DOWN (pitch+)
+    // Vertical actions are judged as a DELTA from the tracked neutral pitch (phones
+    // sit below the face, so absolute pitch is biased). up = look-UP (delta-),
+    // down = look-DOWN (delta+). ~8° of deliberate tilt = satisfied.
+    const dp = pitchDelta(f);
+    if(action==="look_up") return Math.max(0,-dp) / 8;
+    if(action==="look_down") return Math.max(0,dp) / 8;
+    if(action==="nod") return Math.max(0,dp) / 12;   // nod = look DOWN (delta+)
     return 0;
   }
 
@@ -1633,6 +1653,9 @@
     const isTurn = action==="turn_left" || action==="turn_right";
     const o = $("ovalbox");
     let best=null, bestP=0, _hitAt=0, _sawLow=false; const got=[]; const t=performance.now();
+    // Freeze the neutral-pitch baseline while a vertical action is in progress so the
+    // user's deliberate up/down tilt can't drag the baseline it's measured against.
+    _verticalActive = (action==="look_up" || action==="look_down" || action==="nod");
     const need = STRICT_NEED[strictness] || 1, requireBaseline = strictness!=="lenient";
     while(performance.now()-t<ms){
       const prog = actionProgress(action, latest)/need;   // strictness raises the bar
@@ -1644,8 +1667,8 @@
       if(!latest?.face) wrong = true;
       else if(action==="turn_left")  wrong = (latest.noseOff||0) > 0.05;
       else if(action==="turn_right") wrong = (latest.noseOff||0) < -0.05;
-      else if(action==="look_up")    wrong = (latest.pose?.pitch||0) > 5;
-      else if(action==="look_down")  wrong = (latest.pose?.pitch||0) < -5;
+      else if(action==="look_up")    wrong = pitchDelta(latest) > 5;   // looking DOWN when asked UP
+      else if(action==="look_down")  wrong = pitchDelta(latest) < -5;  // looking UP when asked DOWN
       // Colour: RED when doing the wrong thing, brand otherwise. (Success is shown
       // by the check mark, not a green ring.)
       const col = (wrong && p<0.6) ? COLOR.bad : COLOR.active;
@@ -1686,6 +1709,7 @@
     if(best && !got.includes(best) && got.length<3) got.unshift(best);
     got.length = Math.min(got.length, 3);   // cap frames per action (server allows 30 total)
     setDir(null);
+    _verticalActive = false;   // resume neutral-pitch tracking
     if(o){ o.style.boxShadow="none"; o.style.borderColor="#e6eaed"; }   // clear glow
     return got;
   }
