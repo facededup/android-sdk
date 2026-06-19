@@ -596,7 +596,10 @@
     <div class="pbar-wrap" id="pbar-wrap" style="display:none"><div class="pbar" id="pbar"></div></div>
     <div class="guide" id="guide" style="display:none"><i></i><i></i><i></i></div>
     <div class="controls">
-      <button id="start">Start liveness check</button>
+      <!-- Hidden by default: the flow auto-starts (runFlow), so this button is never
+           the initial entry — it only reappears as "Retry" after a failure (showRetry).
+           Keeping it hidden avoids a flash during instant camera reveal. -->
+      <button id="start" style="display:none">Start liveness check</button>
       <div class="micmeter" id="micmeter" style="display:none" role="status" aria-live="polite">
         <div class="mm-fill" id="mm-fill"></div>
         <div class="mm-eq" id="mm-eq"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
