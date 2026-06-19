@@ -1482,12 +1482,12 @@
     let raf = 0, spoke = false, voiced = 0, quietSince = 0, peak = 0, peakMax = 0;
     const t0 = performance.now();
     let lastText = "";
-    // Update the status line only on change (no per-frame thrash), and speak the
-    // important coaching cues once so it feels responsive, not chatty.
-    let coached = "";
-    function say(t, voice){
+    // VISUAL coaching only — never speak() here. The mic is recording during this
+    // window, so any TTS would land in the mic (polluting the audio sent to the
+    // server) and register as "voice" in the meter, breaking the silence/settle
+    // detection. Update the status line only on change (no per-frame thrash).
+    function say(t){
       if(t === lastText) return; lastText = t; $("mm-text").textContent = t;
-      if(voice && voice !== coached){ coached = voice; try{ speak(voice); }catch(_){} }
     }
     function tick(){
       an.getByteTimeDomainData(buf);
@@ -1503,13 +1503,12 @@
         if(voiced > 4 && !spoke){ spoke = true; box.classList.add("heard"); box.classList.remove("quiet"); }
         // Coach the level while they read: latch positive once they're loud enough
         // (peakMax only grows), so it never flickers back to "louder".
-        if(spoke) say(peakMax >= 0.40 ? "🎙 I can hear you — keep going" : "🔈 A little louder…",
-                      peakMax >= 0.40 ? "" : "A little louder");
+        if(spoke) say(peakMax >= 0.40 ? "🎙 I can hear you — keep going" : "🔈 A little louder…");
       }
       else {
         if(spoke){ if(!quietSince) quietSince = t; else { say("✓ Got it"); if(t - quietSince > 800) settledRes(); } }
         // Never picked up a voice — nudge after a beat (bad mic, muted, too far).
-        else if(t - t0 > 1800){ box.classList.add("quiet"); say("🔇 We can't hear you — speak up", "We can't hear you. Please speak up."); }
+        else if(t - t0 > 1800){ box.classList.add("quiet"); say("🔇 We can't hear you — speak up"); }
       }
       raf = requestAnimationFrame(tick);
     }
