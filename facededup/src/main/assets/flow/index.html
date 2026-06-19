@@ -1257,7 +1257,9 @@
   let _badgeEl = null;
   function engineBadge(text){
     try{
-      if(new URLSearchParams(location.search).get("diag") === "0") return;
+      // Diagnostic badge is OFF by default (end users / SDK launches never see it).
+      // Enable only with ?diag=1 for debugging.
+      if(new URLSearchParams(location.search).get("diag") !== "1") return;
       if(!_badgeEl){
         _badgeEl = document.createElement("div");
         _badgeEl.style.cssText = "position:fixed;left:50%;top:12px;transform:translateX(-50%);"

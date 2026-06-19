@@ -110,10 +110,12 @@ class FacededupActivity : AppCompatActivity() {
                 view: WebView, request: WebResourceRequest,
             ): WebResourceResponse? {
                 val url = request.url.toString()
+                // ALWAYS serve the UI (page + scripts + MediaPipe) from the APK so it
+                // opens instantly and can NEVER fail with "Web page not available".
+                // Only the API (/v1/*) is left to hit the network — online it reaches
+                // the server, offline the page queues the capture for later submit.
                 return localMediaPipe(this@FacededupActivity, url)
-                    // OFFLINE: serve the bundled flow from the APK. ONLINE: null ->
-                    // the live page loads so server-side flow updates still apply.
-                    ?: (if (offlineMode) localFlow(this@FacededupActivity, url) else null)
+                    ?: localFlow(this@FacededupActivity, url)
                     ?: super.shouldInterceptRequest(view, request)
             }
 
@@ -139,15 +141,26 @@ class FacededupActivity : AppCompatActivity() {
         apiBase = base
         licenseKey = Regex("(?:^|&)license=([^&]+)").find(params)?.groupValues?.get(1) ?: ""
         offlineMode = !isOnline()
-        // Cache-bust: a unique param per launch forces the WebView to fetch the
-        // current hosted flow instead of serving a stale cached copy.
         val cb = "_cb=" + System.currentTimeMillis()
         // Tell the flow to use native MediaPipe detection (only if the engine started;
         // otherwise it falls back to the bundled WASM Worker automatically).
         val nativeFlag = if (detector?.isReady == true) "&native=mp" else ""
         val query = if (params.isEmpty()) cb else "$params&$cb"
+        // The base URL keeps the origin = the API host, so getUserMedia is a secure
+        // context and the page's /v1 API calls stay same-origin (no CORS).
         val url = "$base/demo/?$query$nativeFlag"
-        web.loadUrl(url)
+        // Load the verification UI straight from the APK (loadDataWithBaseURL) instead
+        // of fetching it over the network. The main frame therefore NEVER touches the
+        // network, so the SDK can't show "Web page not available"; sub-resources are
+        // served by shouldInterceptRequest (localFlow), and only /v1 API calls go out.
+        val bundled = try {
+            assets.open("flow/index.html").bufferedReader().use { it.readText() }
+        } catch (e: Exception) { "" }
+        if (bundled.isNotEmpty()) {
+            web.loadDataWithBaseURL(url, bundled, "text/html", "UTF-8", null)
+        } else {
+            web.loadUrl(url)   // fallback only if the bundled page is somehow missing
+        }
     }
 
     private fun finishWith(json: String) {

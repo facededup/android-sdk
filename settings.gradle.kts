@@ -14,4 +14,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "facededup-liveness-android"
-include(":liveness", ":facededup")
+include(":liveness", ":facededup", ":sample")
