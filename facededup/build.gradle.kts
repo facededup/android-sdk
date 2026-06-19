@@ -16,7 +16,7 @@ plugins {
 }
 
 group = "ng.facededup"
-version = "1.0.9"
+version = "1.1.0"
 
 android {
     namespace = "ng.facededup.sdk"
@@ -40,6 +40,8 @@ android {
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
+    // Offline capture: durable queue + network-constrained submit on reconnect.
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
     // Device attestation (Annex A3e): Play Integrity token bound to the challenge nonce.
     implementation("com.google.android.play:integrity:1.4.0")
     // Native on-device face detection (hybrid): SAME FaceLandmarker model as the web
@@ -57,7 +59,7 @@ publishing {
         register<MavenPublication>("release") {
             groupId = "ng.facededup"
             artifactId = "facededup"
-            version = "1.0.9"
+            version = "1.1.0"
             afterEvaluate { from(components["release"]) }
             pom {
                 name.set("Facededup Android SDK")

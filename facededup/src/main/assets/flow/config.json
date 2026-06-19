@@ -1,0 +1,20 @@
+{
+  "api": {
+    "baseUrl": ""
+  },
+  "behavior": {
+    "method": "face_liveness",
+    "agentMode": false,
+    "strictness": "lenient"
+  },
+  "branding": {
+    "productName": "Facededup",
+    "tagline": "Secure identity verification",
+    "primaryColor": "",
+    "logoUrl": ""
+  },
+  "ui": {
+    "language": "en",
+    "showSettings": true
+  }
+}

@@ -45,6 +45,19 @@ class FacededupActivity : AppCompatActivity() {
     private var done = false
     private var detector: FacededupMpDetector? = null
     private val detectExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
+    // Offline capture: when there's no network at launch we serve the flow from the
+    // APK (localFlow) and the page queues frames to OfflineQueue; OfflineSubmitWorker
+    // submits to /v1/offline/submit on reconnect and the verdict is delivered by webhook.
+    private var offlineMode = false
+    private var apiBase = ""
+    private var licenseKey = ""
+
+    private fun isOnline(): Boolean = try {
+        val cm = getSystemService(CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+        val net = cm.activeNetwork
+        val caps = if (net != null) cm.getNetworkCapabilities(net) else null
+        caps?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) ?: false
+    } catch (e: Exception) { true }   // can't tell -> assume online (load the live page)
 
     private val cameraPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { loadFlow() }
@@ -95,9 +108,14 @@ class FacededupActivity : AppCompatActivity() {
             // Serve the MediaPipe engine + model from the APK (offline, instant, no data).
             override fun shouldInterceptRequest(
                 view: WebView, request: WebResourceRequest,
-            ): WebResourceResponse? =
-                localMediaPipe(this@FacededupActivity, request.url.toString())
+            ): WebResourceResponse? {
+                val url = request.url.toString()
+                return localMediaPipe(this@FacededupActivity, url)
+                    // OFFLINE: serve the bundled flow from the APK. ONLINE: null ->
+                    // the live page loads so server-side flow updates still apply.
+                    ?: (if (offlineMode) localFlow(this@FacededupActivity, url) else null)
                     ?: super.shouldInterceptRequest(view, request)
+            }
 
             override fun onReceivedHttpAuthRequest(
                 view: WebView, handler: HttpAuthHandler, host: String, realm: String,
@@ -116,6 +134,11 @@ class FacededupActivity : AppCompatActivity() {
         val base = (intent.getStringExtra(EXTRA_BASE_URL) ?: "").trimEnd('/')
         if (base.isEmpty()) { finish(); return }
         val params = intent.getStringExtra(EXTRA_PARAMS).orEmpty()
+        // Offline support: detect connectivity at launch + remember base/license so
+        // the page can queue captures and the worker can submit them on reconnect.
+        apiBase = base
+        licenseKey = Regex("(?:^|&)license=([^&]+)").find(params)?.groupValues?.get(1) ?: ""
+        offlineMode = !isOnline()
         // Cache-bust: a unique param per launch forces the WebView to fetch the
         // current hosted flow instead of serving a stale cached copy.
         val cb = "_cb=" + System.currentTimeMillis()
@@ -194,6 +217,20 @@ class FacededupActivity : AppCompatActivity() {
         /** Called by the web flow before /verify; replies via __onFacededupAttestation. */
         @JavascriptInterface
         fun requestAttestation(nonce: String) { runOnUiThread { requestPlayIntegrity(nonce) } }
+
+        /** OFFLINE capture: the flow couldn't reach the server, so it hands us the
+         *  captured frames (a /v1/offline/submit body). We persist it and schedule a
+         *  network-constrained submit; the verdict is later delivered by webhook. */
+        @JavascriptInterface
+        fun queueOffline(payloadJson: String) {
+            runCatching {
+                val o = JSONObject(payloadJson)
+                o.put("_base", apiBase)         // worker needs the API origin
+                o.put("_license", licenseKey)   // and the tenant key to authenticate
+                OfflineQueue.enqueue(applicationContext, o.toString())
+                OfflineSubmitWorker.schedule(applicationContext)
+            }
+        }
     }
 
     /** Native-detection bridge: the flow ships a base64 JPEG per frame; we run MediaPipe

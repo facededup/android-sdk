@@ -35,3 +35,32 @@ internal fun localMediaPipe(ctx: Context, rawUrl: String): WebResourceResponse? 
         null
     }
 }
+
+/**
+ * Serve the verification FLOW itself (page + client JS + config) from bundled
+ * assets so capture works with ZERO network. Only used when the device is OFFLINE
+ * (gated by the caller) — when online we let the live page load so server-side
+ * flow updates still reach the SDK. The page submits to the bridge's offline queue
+ * when there's no network; the deferred decision happens on reconnect.
+ */
+internal fun localFlow(ctx: Context, rawUrl: String): WebResourceResponse? {
+    val u = rawUrl.substringBefore('?')
+    val (asset, mime) = when {
+        u.endsWith("/demo/") || u.endsWith("/demo/index.html") -> "flow/index.html" to "text/html"
+        u.endsWith("/demo/config.json") -> "flow/config.json" to "application/json"
+        u.endsWith("/sdk/index.js")  -> "flow/sdk/index.js" to "text/javascript"
+        u.endsWith("/sdk/client.js") -> "flow/sdk/client.js" to "text/javascript"
+        u.endsWith("/sdk/signals.js")-> "flow/sdk/signals.js" to "text/javascript"
+        u.endsWith("/sdk/capture.js")-> "flow/sdk/capture.js" to "text/javascript"
+        else -> return null
+    }
+    return try {
+        WebResourceResponse(
+            mime, "utf-8", 200, "OK",
+            mapOf("Access-Control-Allow-Origin" to "*", "Cache-Control" to "no-store"),
+            ctx.assets.open(asset),
+        )
+    } catch (e: Exception) {
+        null
+    }
+}
