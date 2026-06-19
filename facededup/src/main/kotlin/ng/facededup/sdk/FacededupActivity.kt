@@ -59,8 +59,12 @@ class FacededupActivity : AppCompatActivity() {
         caps?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) ?: false
     } catch (e: Exception) { true }   // can't tell -> assume online (load the live page)
 
-    private val cameraPermission =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { loadFlow() }
+    // Request CAMERA *and* RECORD_AUDIO together: the read-a-number / voice challenge
+    // needs the mic, and the WebView can only grant the page mic access if the app holds
+    // RECORD_AUDIO. We proceed regardless of the mic grant (motion-only liveness still
+    // works without it) — loadFlow runs once the dialog is dismissed.
+    private val mediaPermissions =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { loadFlow() }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -127,9 +131,10 @@ class FacededupActivity : AppCompatActivity() {
             }
         }
 
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
-            == PackageManager.PERMISSION_GRANTED) loadFlow()
-        else cameraPermission.launch(Manifest.permission.CAMERA)
+        val needCam = ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED
+        val needMic = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED
+        if (!needCam && !needMic) loadFlow()
+        else mediaPermissions.launch(arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO))
     }
 
     private fun loadFlow() {

@@ -29,7 +29,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val title = TextView(this).apply {
-            text = "Facededup Demo 1.1.2"
+            text = "Facededup Demo 1.1.3"
             textSize = 22f
             gravity = Gravity.CENTER
         }
@@ -47,6 +47,10 @@ class MainActivity : AppCompatActivity() {
                         baseUrl = "https://facededup.ai",
                         licenseKey = "fdk_40cT6S_lWEpiCjd22ls8bLsL_YQnZNzq",
                         subjectId = "demo-user-1",
+                        // Mirror the branded integration being field-tested (green accent,
+                        // black background) so this demo matches it apples-to-apples.
+                        primaryColor = "#1E9C69",
+                        backgroundColor = "#000000",
                     )
                 )
             }
