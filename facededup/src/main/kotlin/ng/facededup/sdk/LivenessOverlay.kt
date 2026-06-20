@@ -11,55 +11,49 @@ import android.graphics.PorterDuffXfermode
 import android.graphics.RectF
 import android.view.View
 import android.view.animation.LinearInterpolator
-import kotlin.math.sin
 
 /**
- * Light-themed liveness overlay: a light-grey scrim with a tall oval cut-out (camera
- * shows through), a solid ring around the oval (green when the face is present, red when
- * not / multiple faces), a progress arc that fills as the challenge completes, a curved
- * directional cue OUTSIDE the oval on the side to move toward, and a success tick.
- * Background stays light so the host page reads as a clean white screen.
+ * Clean, banking-grade liveness overlay: an opaque white surround with a tall oval
+ * cut-out (only the capture area shows the camera), and a SINGLE neutral ring split
+ * into one segment per challenge. As each challenge passes, its segment animates
+ * smoothly to green — no glow halos, no pulsing, no stacked rings. Calm by design.
  */
 internal class LivenessOverlay(ctx: Context) : View(ctx) {
 
-    // Opaque white surround so ONLY the oval (the capture area) shows the camera — the rest
-    // of the screen reads as a clean white frame, not a dimmed live view of the room.
+    // Opaque white surround so only the oval (capture area) shows the camera.
     private val scrim = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
     private val clear = Paint(Paint.ANTI_ALIAS_FLAG).apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR) }
+    // Neutral base ring (unfilled segments).
     private val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE; strokeWidth = dp(5f); strokeCap = Paint.Cap.ROUND
+        style = Paint.Style.STROKE; strokeWidth = dp(6f); strokeCap = Paint.Cap.ROUND
     }
+    // Green progress fill (completed / filling segments).
     private val prog = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE; strokeWidth = dp(7f); strokeCap = Paint.Cap.ROUND
-    }
-    private val cue = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE; strokeWidth = dp(7f); strokeCap = Paint.Cap.ROUND
-        color = Color.parseColor("#2D2B2A")
+        style = Paint.Style.STROKE; strokeWidth = dp(6f); strokeCap = Paint.Cap.ROUND
     }
     private val tick = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE; strokeWidth = dp(7f); strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND; color = GREEN
     }
-    private val oval = RectF()
-    private var phase = 0f
-    private val animator = ValueAnimator.ofFloat(0f, 1f).apply {
-        duration = 1400; repeatCount = ValueAnimator.INFINITE; interpolator = LinearInterpolator()
-        addUpdateListener { phase = it.animatedValue as Float; invalidate() }
-    }
-
     private val diag = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#111111"); textAlign = Paint.Align.CENTER; textSize = dp(13f)
     }
 
-    private val glow = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND }
+    private val oval = RectF()
 
-    var ringColor: Int = GREEN
-    var progress: Float = 0f                 // target; the ring eases toward it (smooth)
+    // A single low-frequency animator drives only the smooth easing of the fill —
+    // it does NOT pulse anything (no breathing/glow), it just keeps invalidating
+    // while shownProgress catches up to the target.
+    private val animator = ValueAnimator.ofFloat(0f, 1f).apply {
+        duration = 1000; repeatCount = ValueAnimator.INFINITE; interpolator = LinearInterpolator()
+        addUpdateListener { invalidate() }
+    }
+
+    var ringColor: Int = GREEN            // kept for API compat; not used for the base ring
+    var progress: Float = 0f              // overall progress 0..1 (target; eased)
     private var shownProgress: Float = 0f
-    /** Current action's live sub-progress (0..1) — drives the smart oval glow (smile/blink/turn). */
-    var actionProgress: Float = 0f
-    private var shownAction: Float = 0f
-    var directionDeg: Float? = null
+    var segments: Int = 3                 // one ring segment per challenge
+    var directionDeg: Float? = null       // kept for API compat; cues removed for a calm UI
     var success: Boolean = false
     var wrong: Boolean = false
     /** Live signal readout (shown only when diagnostics are enabled). */
@@ -68,11 +62,10 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
     /** Developer-configurable ring thickness + colours + scrim. */
     fun applyConfig(ringWidthDp: Float, ring: Int, success: Int, scrimHex: String?) {
         val px = dp(ringWidthDp)
-        this.ring.strokeWidth = px * 0.78f; prog.strokeWidth = px; cue.strokeWidth = px; tick.strokeWidth = px
-        defaultRing = ring; successColor = success
+        this.ring.strokeWidth = px; prog.strokeWidth = px; tick.strokeWidth = px
+        successColor = success
         runCatching { scrimHex?.let { scrim.color = Color.parseColor(it) } }
     }
-    private var defaultRing = GREEN
     private var successColor = GREEN
 
     init { setLayerType(LAYER_TYPE_HARDWARE, null) }
@@ -89,61 +82,37 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
     }
 
     override fun onDraw(canvas: Canvas) {
-        shownProgress += (progress - shownProgress) * 0.25f      // ease toward target (smooth)
-        shownAction += ((if (success) 1f else actionProgress) - shownAction) * 0.30f
+        // gentle ease toward the target — smooth + elegant, no snapping
+        val target = if (success) 1f else progress
+        shownProgress += (target - shownProgress) * 0.16f
+        if (kotlin.math.abs(target - shownProgress) < 0.002f) shownProgress = target
+
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), scrim)
         canvas.drawOval(oval, clear)                   // punch the camera window
 
-        val col = if (success) successColor else ringColor
-        // SMART GLOW: the oval glows greener + brighter + wider as the current action
-        // (smile, blink, turn…) gets closer to satisfied — instant positive feedback.
-        val act = shownAction.coerceIn(0f, 1f)
-        val pulse = (0.5 + 0.5 * sin(phase * 2 * Math.PI)).toFloat()
-        glow.color = if (wrong) col else lerpColor(col, successColor, act)
-        glow.strokeWidth = ring.strokeWidth + dp(10f) + dp(16f) * act
-        glow.alpha = (40 + 30 * pulse + 150 * act).toInt().coerceIn(20, 220)
-        canvas.drawOval(oval, glow); glow.alpha = 255
+        val total = segments.coerceAtLeast(1)
+        val gapDeg = if (total > 1) 7f else 0f         // small gap between segments
+        val segDeg = 360f / total
+        val fillUnits = shownProgress.coerceIn(0f, 1f) * total
+        val active = fillUnits.toInt().coerceIn(0, total - 1)
 
-        // solid ring (green when placed/active; red on wrong move; breathes while positioning)
-        ring.color = if (wrong) col else lerpColor(col, successColor, act)
-        ring.alpha = if (shownProgress < 0.02f && !success && act < 0.02f)
-            (170 + 70 * sin(phase * 2 * Math.PI)).toInt().coerceIn(90, 255) else 255
-        canvas.drawOval(oval, ring); ring.alpha = 255
+        for (i in 0 until total) {
+            val start = -90f + i * segDeg + gapDeg / 2f
+            val sweep = segDeg - gapDeg
+            // neutral base — soft red on the ACTIVE segment if the user moves the wrong way
+            ring.color = if (wrong && i == active && !success) WRONG else NEUTRAL
+            canvas.drawArc(oval, start, sweep, false, ring)
+            // green fill for the completed portion of this segment
+            val f = (fillUnits - i).coerceIn(0f, 1f)
+            if (f > 0.001f && !(wrong && i == active)) {
+                prog.color = successColor
+                canvas.drawArc(oval, start, sweep * f, false, prog)
+            }
+        }
 
         diagnostic?.let { canvas.drawText(it, width / 2f, height - dp(70f), diag) }
 
-        if (success) {
-            // Completed: fill the WHOLE ring green, then the tick.
-            prog.color = successColor
-            canvas.drawArc(oval, -90f, 360f, false, prog)
-            drawTick(canvas)
-            return
-        }
-
-        // progress arc fills (eased) from the top as the action completes
-        if (shownProgress > 0.02f) {
-            prog.color = if (wrong) col else successColor
-            canvas.drawArc(oval, -90f, 360f * shownProgress.coerceIn(0f, 1f), false, prog)
-        }
-        // curved directional cue OUTSIDE the oval on the move side
-        directionDeg?.let { drawCue(canvas, it) }
-    }
-
-    /** ARGB lerp a→b by t (0..1) — used to tint the ring/glow toward green as an action completes. */
-    private fun lerpColor(a: Int, b: Int, t: Float): Int {
-        val u = t.coerceIn(0f, 1f)
-        val ar = (a ushr 16) and 0xFF; val ag = (a ushr 8) and 0xFF; val ab = a and 0xFF
-        val br = (b ushr 16) and 0xFF; val bg = (b ushr 8) and 0xFF; val bb = b and 0xFF
-        val r = (ar + (br - ar) * u).toInt(); val g = (ag + (bg - ag) * u).toInt(); val bl = (ab + (bb - ab) * u).toInt()
-        return Color.rgb(r, g, bl)
-    }
-
-    private fun drawCue(canvas: Canvas, deg: Float) {
-        val pad = dp(14f) + dp(6f) * (0.5f + 0.5f * sin(phase * 2 * Math.PI).toFloat())
-        val r = RectF(oval.left - pad, oval.top - pad, oval.right + pad, oval.bottom + pad)
-        // math angle (0=right,90=up,180=left,270=down) → screen sweep angle (0=right, CW+)
-        val center = -deg
-        canvas.drawArc(r, center - 27f, 54f, false, cue)
+        if (success) drawTick(canvas)
     }
 
     private fun drawTick(canvas: Canvas) {
@@ -156,5 +125,9 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
 
     private fun dp(v: Float) = v * resources.displayMetrics.density
 
-    companion object { val GREEN: Int = Color.parseColor("#2CC05C") }
+    companion object {
+        val GREEN: Int = Color.parseColor("#2CC05C")
+        private val NEUTRAL: Int = Color.parseColor("#E2E5EA")   // calm light-grey default ring
+        private val WRONG: Int = Color.parseColor("#E24B4A")     // subtle red on wrong move
+    }
 }

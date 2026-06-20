@@ -12,19 +12,43 @@
 plugins {
     id("com.android.library")
     id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.serialization")
     `maven-publish`
 }
 
 group = "ng.facededup"
-version = "2.0.0-alpha10"
+version = "2.0.0-alpha11"
+
+// ── Encrypted-ingest config (NEVER hard-code the secret) ──────────────────────
+// Base URL + ingest secret are read at BUILD TIME from (in precedence order):
+//   1. a Gradle property  (-Pfacededup.ingestKey=… or ~/.gradle/gradle.properties)
+//   2. local.properties   (facededup.ingestKey=… — this file is .gitignored)
+//   3. an environment var (FACEDEDUP_INGEST_KEY — CI secret manager)
+// Default for the key is EMPTY, so nothing secret ever lands in source/VCS.
+val localProps = java.util.Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+fun ingestProp(gradleKey: String, propKey: String, envKey: String, default: String = ""): String =
+    (project.findProperty(gradleKey) as String?)
+        ?: localProps.getProperty(propKey)
+        ?: System.getenv(envKey)
+        ?: default
+// Prod base by default; point at staging via the same precedence as the key.
+val facededupBaseUrl = ingestProp("facededup.baseUrl", "facededup.baseUrl", "FACEDEDUP_BASE_URL",
+    "https://api.facededup.ai")
+val facededupIngestKey = ingestProp("facededup.ingestKey", "facededup.ingestKey", "FACEDEDUP_INGEST_KEY")
 
 android {
     namespace = "ng.facededup.sdk"
     compileSdk = 35
     defaultConfig {
         minSdk = 21
+        buildConfigField("String", "FACEDEDUP_BASE_URL", "\"$facededupBaseUrl\"")
+        buildConfigField("String", "FACEDEDUP_INGEST_KEY", "\"$facededupIngestKey\"")
+        consumerProguardFiles("consumer-rules.pro")
     }
-    buildFeatures { buildConfig = false }
+    buildFeatures { buildConfig = true }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -55,6 +79,20 @@ dependencies {
     // the active-liveness challenge (no WebView, no WASM, no model download).
     implementation("com.google.mlkit:face-detection:16.1.7")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
+
+    // --- Encrypted liveness-event ingest (RSA-OAEP-256 + AES-256-GCM) ---
+    // Lean: kotlinx-serialization for the wire schema + coroutines for the
+    // suspend submit. Crypto is stock javax.crypto; HTTP is HttpURLConnection
+    // (no Retrofit/OkHttp). See ng/facededup/sdk/ingest/README.md.
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+
+    // Unit tests: Robolectric provides a real android.util.Base64 on the JVM so
+    // sealEnvelope() round-trips without an emulator.
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.12.2")
+    testImplementation("androidx.test:core:1.6.1")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
 }
 
 publishing {
@@ -62,7 +100,7 @@ publishing {
         register<MavenPublication>("release") {
             groupId = "ng.facededup"
             artifactId = "facededup"
-            version = "2.0.0-alpha10"
+            version = "2.0.0-alpha11"
             afterEvaluate { from(components["release"]) }
             pom {
                 name.set("Facededup Android SDK")

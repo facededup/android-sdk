@@ -80,6 +80,8 @@ class FacededupActivity : AppCompatActivity() {
     private var captureStartMs = 0L
     private var lastBitmap: Bitmap? = null        // most recent rotated/mirrored frame (for freeze)
     private var brightnessBoosted = false         // whether we forced the screen bright for low light
+    private var lumaEma = -1f                      // smoothed scene brightness (anti-flicker)
+    private var darkRun = 0                        // consecutive dark frames before latching boost
     private val movement by lazy { MovementMonitor(this) }
 
     private val cameraPermission =
@@ -232,8 +234,16 @@ class FacededupActivity : AppCompatActivity() {
         val mirror = !agentMode
 
         // --- Smart scene quality: brightness + framing coaching ---------------------
-        val dark = luma < cfg.darkLuma
-        applyBrightness(dark)                       // auto-boost the screen in low light
+        // Smooth the luma (EMA) so the dark/bright decision can't flicker frame-to-frame.
+        lumaEma = if (lumaEma < 0f) luma.toFloat() else lumaEma + (luma - lumaEma) * 0.1f
+        val dark = lumaEma < cfg.darkLuma
+        // Latch the screen-brightness boost ON after several steady dark frames, then HOLD
+        // it for the rest of the flow. Toggling per-frame caused a feedback flicker (the
+        // brighter screen lights the face → luma rises → boost off → face darkens → on…).
+        if (!brightnessBoosted) {
+            darkRun = if (dark) darkRun + 1 else 0
+            if (darkRun >= 8) applyBrightness(true)
+        }
         // Face coverage = how much of the frame the face fills (rotation-invariant area ratio).
         val coverage = if (face != null && count == 1) {
             val b = face.boundingBox
@@ -272,11 +282,9 @@ class FacededupActivity : AppCompatActivity() {
         val prog = liveness.overallProgress
         val dir = if (present && !finishedNow) liveness.directionDeg else null
         runOnUiThread {
-            overlay.ringColor = if (count > 1 || wrong) Color.parseColor("#E24B4A") else primaryColor
             overlay.wrong = wrong
             overlay.progress = prog
-            // Smart oval glow: how close the CURRENT action is to satisfied (smile/blink/turn).
-            overlay.actionProgress = if (present && !finishedNow && !positioning) liveness.subProgress else 0f
+            overlay.segments = liveness.total            // one ring segment per challenge
             overlay.directionDeg = dir
             overlay.success = finishedNow
             overlay.diagnostic = if (cfg.showDiagnostics) liveness.debugLine() else null
@@ -303,14 +311,15 @@ class FacededupActivity : AppCompatActivity() {
         (sum / maxOf(1, cnt)).toInt()
     }.getOrDefault(200)
 
-    /** Force the screen to full brightness in low light (helps the front camera); restore after. */
-    private fun applyBrightness(dark: Boolean) {
-        if (dark == brightnessBoosted) return
-        brightnessBoosted = dark
+    /** Boost the screen to full brightness ONCE (steady; helps the front camera in low light).
+     *  Held for the rest of the flow and restored in onDestroy — never toggled per frame. */
+    private fun applyBrightness(on: Boolean) {
+        if (brightnessBoosted == on) return
+        brightnessBoosted = on
         runOnUiThread {
             runCatching {
                 val lp = window.attributes
-                lp.screenBrightness = if (dark) 1f else WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                lp.screenBrightness = if (on) 1f else WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
                 window.attributes = lp
             }
         }
