@@ -11,31 +11,32 @@ import android.graphics.PorterDuffXfermode
 import android.graphics.RectF
 import android.view.View
 import android.view.animation.LinearInterpolator
-import kotlin.math.cos
 import kotlin.math.sin
 
 /**
- * Animated camera overlay (2.0): dimmed scrim + oval cut-out, a faint track ring, a
- * PROGRESS arc that fills as the user completes the challenge, a live rotating "sweep"
- * that shows it's working, a directional chevron (turn left/right) that nudges, and a
- * success tick. Native replacement for the web flow's animated arc — no WebView.
+ * Light-themed liveness overlay: a light-grey scrim with a tall oval cut-out (camera
+ * shows through), a solid ring around the oval (green when the face is present, red when
+ * not / multiple faces), a progress arc that fills as the challenge completes, a curved
+ * directional cue OUTSIDE the oval on the side to move toward, and a success tick.
+ * Background stays light so the host page reads as a clean white screen.
  */
 internal class LivenessOverlay(ctx: Context) : View(ctx) {
 
-    private val scrim = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#CC0B1F3A") }
+    private val scrim = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#CCE0E0E0") }
     private val clear = Paint(Paint.ANTI_ALIAS_FLAG).apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR) }
-    private val track = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE; strokeWidth = dp(4f); color = Color.parseColor("#33FFFFFF")
+    private val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeWidth = dp(5f); strokeCap = Paint.Cap.ROUND
     }
-    private val arc = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE; strokeWidth = dp(6f); strokeCap = Paint.Cap.ROUND
+    private val prog = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeWidth = dp(7f); strokeCap = Paint.Cap.ROUND
     }
-    private val chevron = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE; strokeWidth = dp(6f); strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
+    private val cue = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeWidth = dp(7f); strokeCap = Paint.Cap.ROUND
+        color = Color.parseColor("#2D2B2A")
     }
     private val tick = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE; strokeWidth = dp(7f); strokeCap = Paint.Cap.ROUND
-        strokeJoin = Paint.Join.ROUND; color = Color.parseColor("#22A447")
+        strokeJoin = Paint.Join.ROUND; color = GREEN
     }
     private val oval = RectF()
     private var phase = 0f
@@ -44,10 +45,8 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
         addUpdateListener { phase = it.animatedValue as Float; invalidate() }
     }
 
-    var ringColor: Int = Color.parseColor("#1E9C69")
-    /** 0..1 overall challenge completion. */
+    var ringColor: Int = GREEN
     var progress: Float = 0f
-    /** Arc-highlight angle (0 = right, 180 = left) for a directional cue, or null. */
     var directionDeg: Float? = null
     var success: Boolean = false
 
@@ -55,66 +54,54 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
     override fun onAttachedToWindow() { super.onAttachedToWindow(); animator.start() }
     override fun onDetachedFromWindow() { animator.cancel(); super.onDetachedFromWindow() }
 
+    fun ovalBottomPx(): Float = oval.bottom
+    fun ovalTopPx(): Float = oval.top
+
     override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
         val ow2 = w * 0.66f; val oh2 = ow2 * 1.32f
-        val cx = w / 2f; val cy = h * 0.46f
+        val cx = w / 2f; val cy = h * 0.44f
         oval.set(cx - ow2 / 2, cy - oh2 / 2, cx + ow2 / 2, cy + oh2 / 2)
     }
 
     override fun onDraw(canvas: Canvas) {
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), scrim)
-        canvas.drawOval(oval, clear)                 // punch the hole
-        canvas.drawOval(oval, track)                 // faint full track
+        canvas.drawOval(oval, clear)                   // punch the camera window
 
-        val col = if (success) Color.parseColor("#22A447") else ringColor
-        arc.color = col
-        if (progress > 0f) canvas.drawArc(oval, -90f, 360f * progress.coerceIn(0f, 1f), false, arc)
+        // solid ring (green when the face is well placed; red otherwise)
+        ring.color = if (success) GREEN else ringColor
+        if (progress < 0.02f && !success) {            // gentle breathe while positioning
+            ring.alpha = (160 + 70 * sin(phase * 2 * Math.PI)).toInt().coerceIn(80, 255)
+        } else ring.alpha = 255
+        canvas.drawOval(oval, ring)
+        ring.alpha = 255
 
         if (success) { drawTick(canvas); return }
 
-        // breathing brand ring while positioning / low progress — always-visible "alive" cue
-        if (progress < 0.02f) {
-            val pulse = 0.30f + 0.30f * (0.5f + 0.5f * sin(phase * 2 * Math.PI).toFloat())
-            arc.alpha = (pulse * 255).toInt()
-            canvas.drawOval(oval, arc)
-            arc.alpha = 255
+        // progress arc fills from the top as steps complete
+        if (progress > 0.02f) {
+            prog.color = GREEN
+            canvas.drawArc(oval, -90f, 360f * progress.coerceIn(0f, 1f), false, prog)
         }
-        // live "sweep" comet rotating around the ring
-        val sweepStart = -90f + phase * 360f
-        arc.alpha = 170
-        canvas.drawArc(oval, sweepStart, 46f, false, arc)
-        arc.alpha = 255
-
-        directionDeg?.let { deg -> drawChevron(canvas, deg, col) }
+        // curved directional cue OUTSIDE the oval on the move side
+        directionDeg?.let { drawCue(canvas, it) }
     }
 
-    // Outward-pointing chevron at the oval edge for ANY direction (math angle:
-    // 0=right, 90=up, 180=left, 270=down), nudging toward the target to cue the move.
-    private fun drawChevron(canvas: Canvas, deg: Float, color: Int) {
-        chevron.color = color
-        val rad = Math.toRadians(deg.toDouble())
-        val rx = oval.width() / 2f; val ry = oval.height() / 2f
-        val cx = oval.centerX(); val cy = oval.centerY()
-        val ux = cos(rad).toFloat(); val uy = -sin(rad).toFloat()        // outward unit (screen y down)
-        val px = -uy; val py = ux                                        // perpendicular
-        val nudge = dp(6f) * (0.5f + 0.5f * sin(phase * 2 * Math.PI).toFloat())
-        // base point just outside the ellipse edge along the direction
-        val ex = cx + rx * cos(rad).toFloat() + (dp(16f) + nudge) * ux
-        val ey = cy - ry * sin(rad).toFloat() + (dp(16f) + nudge) * uy
-        val s = dp(13f)
-        val p = Path()
-        p.moveTo(ex + px * s, ey + py * s)        // one arm
-        p.lineTo(ex + ux * s, ey + uy * s)        // tip (points outward in the move direction)
-        p.lineTo(ex - px * s, ey - py * s)        // other arm
-        canvas.drawPath(p, chevron)
+    private fun drawCue(canvas: Canvas, deg: Float) {
+        val pad = dp(14f) + dp(6f) * (0.5f + 0.5f * sin(phase * 2 * Math.PI).toFloat())
+        val r = RectF(oval.left - pad, oval.top - pad, oval.right + pad, oval.bottom + pad)
+        // math angle (0=right,90=up,180=left,270=down) → screen sweep angle (0=right, CW+)
+        val center = -deg
+        canvas.drawArc(r, center - 27f, 54f, false, cue)
     }
 
     private fun drawTick(canvas: Canvas) {
-        val cx = oval.centerX(); val cy = oval.centerY() + oval.height() * 0.18f; val s = dp(16f)
+        val cx = oval.centerX(); val cy = oval.centerY() + oval.height() * 0.16f; val s = dp(16f)
         val p = Path()
         p.moveTo(cx - s, cy); p.lineTo(cx - s * 0.2f, cy + s * 0.8f); p.lineTo(cx + s, cy - s * 0.8f)
         canvas.drawPath(p, tick)
     }
 
     private fun dp(v: Float) = v * resources.displayMetrics.density
+
+    companion object { val GREEN: Int = Color.parseColor("#2CC05C") }
 }

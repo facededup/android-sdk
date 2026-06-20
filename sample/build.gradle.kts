@@ -11,8 +11,8 @@ android {
         applicationId = "ng.facededup.sample"
         minSdk = 24
         targetSdk = 35
-        versionCode = 203
-        versionName = "2.0.0-alpha04"
+        versionCode = 204
+        versionName = "2.0.0-alpha05"
     }
     buildTypes {
         release { isMinifyEnabled = false }
