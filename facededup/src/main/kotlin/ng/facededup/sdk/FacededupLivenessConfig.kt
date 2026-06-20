@@ -33,12 +33,32 @@ data class FacededupLivenessConfig(
     val ringColor: String? = null,      // hex; default = theme primary / green
     val successColor: String? = null,   // hex; default green
     val scrimColor: String? = null,     // hex (with alpha); default light grey
-    val showDiagnostics: Boolean = false, // overlay live yaw/pitch/smile + directive
+    val showDiagnostics: Boolean = false, // overlay live yaw/pitch/smile + directive (OFF by default)
     /** Timing. */
     val actionTimeoutMs: Long = 12000,  // per-action: after this, nudge "try the other way"
     val totalTimeoutMs: Long = 60000,   // whole flow safety cap
     val framesPerAction: Int = 2,
+    /** Branding / white-label — fully customisable, no SDK change needed. */
+    val pillColor: String? = null,        // instruction pill background (hex w/ alpha)
+    val pillTextColor: String? = null,    // instruction text colour
+    val cancelColor: String? = null,      // "Cancel" colour
+    val showCancel: Boolean = true,
+    val logoAsset: String? = null,        // optional brand logo (path under app assets) shown at top
+    /** Override ANY on-screen string by key (also for localisation). Keys:
+     *  center_face, turn_left, turn_right, look_up, look_down, smile, blink, hold_still,
+     *  checking, only_one_face, great, cancel. */
+    val strings: Map<String, String> = emptyMap(),
 ) {
+    private val defaults = mapOf(
+        "center_face" to "Center your face in the oval",
+        "turn_left" to "Turn your head left", "turn_right" to "Turn your head right",
+        "look_up" to "Tilt your head up", "look_down" to "Tilt your head down",
+        "smile" to "Smile", "blink" to "Blink your eyes", "hold_still" to "Hold still",
+        "checking" to "Checking…", "only_one_face" to "Only one face, please",
+        "great" to "Great", "cancel" to "Cancel",
+    )
+    /** Resolve a UI string: developer override → built-in default → the key. */
+    fun str(key: String): String = strings[key] ?: defaults[key] ?: key
     companion object {
         /** Programmatic config (if set) wins; else read assets/facededup_liveness.json; else defaults. */
         fun resolve(ctx: Context, programmatic: FacededupLivenessConfig?): FacededupLivenessConfig =
@@ -58,6 +78,8 @@ data class FacededupLivenessConfig(
             val acts = if (o.has("actions")) {
                 val a = o.optJSONArray("actions"); (0 until (a?.length() ?: 0)).map { a!!.optString(it) }
             } else def.actions
+            val strs = HashMap<String, String>()
+            o.optJSONObject("strings")?.let { s -> s.keys().forEach { k -> strs[k] = s.optString(k) } }
             return FacededupLivenessConfig(
                 actions = acts,
                 sequenceLength = i("sequenceLength", def.sequenceLength),
@@ -74,6 +96,12 @@ data class FacededupLivenessConfig(
                 actionTimeoutMs = l("actionTimeoutMs", def.actionTimeoutMs),
                 totalTimeoutMs = l("totalTimeoutMs", def.totalTimeoutMs),
                 framesPerAction = i("framesPerAction", def.framesPerAction),
+                pillColor = str("pillColor", def.pillColor),
+                pillTextColor = str("pillTextColor", def.pillTextColor),
+                cancelColor = str("cancelColor", def.cancelColor),
+                showCancel = b("showCancel", def.showCancel),
+                logoAsset = str("logoAsset", def.logoAsset),
+                strings = strs,
             )
         }
     }

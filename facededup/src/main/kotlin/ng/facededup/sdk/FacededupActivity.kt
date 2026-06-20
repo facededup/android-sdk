@@ -119,30 +119,47 @@ class FacededupActivity : AppCompatActivity() {
         overlay = LivenessOverlay(this).apply {
             layoutParams = FrameLayout.LayoutParams(MATCH, MATCH); ringColor = primaryColor
         }
-        // Instruction on a dark rounded pill, placed just BELOW the oval.
+        // Instruction on a rounded pill, placed just BELOW the oval (colours configurable).
+        val pillBg = parseColorOr(cfg.pillColor, Color.parseColor("#D92D2B2A"))
+        val pillText = parseColorOr(cfg.pillTextColor, Color.WHITE)
         hint = TextView(this).apply {
-            text = "Center your face in the oval"; textSize = 17f; setTextColor(Color.WHITE)
+            text = cfg.str("center_face"); textSize = 17f; setTextColor(pillText)
             gravity = Gravity.CENTER; setTypeface(typeface, android.graphics.Typeface.BOLD)
-            background = GradientDrawable().apply {
-                setColor(Color.parseColor("#D92D2B2A")); cornerRadius = dpf(24f)
-            }
+            background = GradientDrawable().apply { setColor(pillBg); cornerRadius = dpf(24f) }
             setPadding(dp(22), dp(12), dp(22), dp(12))
             layoutParams = FrameLayout.LayoutParams(WRAP, WRAP).apply {
                 gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
             }
         }
         title = hint   // single instruction line drives the pill
-        val cancel = TextView(this).apply {
-            text = "Cancel"; textSize = 16f
-            setTextColor(runCatching { Color.parseColor("#5F5E5A") }.getOrDefault(Color.GRAY))
-            gravity = Gravity.CENTER; setTypeface(typeface, android.graphics.Typeface.BOLD)
-            setPadding(dp(24), dp(14), dp(24), dp(14))
-            setOnClickListener { cancelFlow() }
-            layoutParams = FrameLayout.LayoutParams(MATCH, WRAP).apply {
-                gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL; bottomMargin = dp(36)
+        root.addView(previewView); root.addView(overlay)
+        // Optional brand logo at the top (from app assets).
+        cfg.logoAsset?.let { path ->
+            runCatching {
+                val bmp = android.graphics.BitmapFactory.decodeStream(assets.open(path))
+                val iv = android.widget.ImageView(this).apply {
+                    setImageBitmap(bmp); adjustViewBounds = true
+                    layoutParams = FrameLayout.LayoutParams(WRAP, dp(40)).apply {
+                        gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL; topMargin = dp(40)
+                    }
+                }
+                root.addView(iv)
             }
         }
-        root.addView(previewView); root.addView(overlay); root.addView(hint); root.addView(cancel)
+        root.addView(hint)
+        if (cfg.showCancel) {
+            val cancel = TextView(this).apply {
+                text = cfg.str("cancel"); textSize = 16f
+                setTextColor(parseColorOr(cfg.cancelColor, Color.parseColor("#5F5E5A")))
+                gravity = Gravity.CENTER; setTypeface(typeface, android.graphics.Typeface.BOLD)
+                setPadding(dp(24), dp(14), dp(24), dp(14))
+                setOnClickListener { cancelFlow() }
+                layoutParams = FrameLayout.LayoutParams(MATCH, WRAP).apply {
+                    gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL; bottomMargin = dp(36)
+                }
+            }
+            root.addView(cancel)
+        }
         setContentView(root)
         // Once laid out, drop the instruction pill just under the oval.
         overlay.post {
@@ -154,6 +171,8 @@ class FacededupActivity : AppCompatActivity() {
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
     private fun dpf(v: Float): Float = v * resources.displayMetrics.density
+    private fun parseColorOr(hex: String?, fallback: Int): Int =
+        runCatching { hex?.let { Color.parseColor(it) } }.getOrNull() ?: fallback
 
     private fun cancelFlow() {
         if (done) return
@@ -218,8 +237,8 @@ class FacededupActivity : AppCompatActivity() {
             overlay.success = finishedNow
             overlay.diagnostic = if (cfg.showDiagnostics) liveness.debugLine() else null
             hint.text = when {
-                finishedNow -> "Great"
-                count > 1 -> "Only one face, please"
+                finishedNow -> cfg.str("great")
+                count > 1 -> cfg.str("only_one_face")
                 else -> liveness.hint(present)
             }
         }
@@ -228,7 +247,7 @@ class FacededupActivity : AppCompatActivity() {
 
     private fun submit() {
         if (done) return
-        hint.text = "Checking…"
+        hint.text = cfg.str("checking")
         movement.stop()
         val durationMs = if (captureStartMs > 0) System.currentTimeMillis() - captureStartMs else 0L
         val all = ArrayList<LivenessClient.Frame>()

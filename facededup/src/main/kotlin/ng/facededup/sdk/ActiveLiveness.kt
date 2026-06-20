@@ -80,15 +80,15 @@ internal class ActiveLiveness(private val cfg: FacededupLivenessConfig) {
         if (total == 0) 0f else ((index + subProgress) / total).coerceIn(0f, 1f)
 
     fun hint(facePresent: Boolean): String = when {
-        !facePresent -> "Center your face in the oval"
+        !facePresent -> cfg.str("center_face")
         else -> when (current) {
-            Directive.TurnLeft -> "Turn your head left"
-            Directive.TurnRight -> "Turn your head right"
-            Directive.LookUp -> "Tilt your head up"
-            Directive.LookDown -> "Tilt your head down"
-            Directive.Smile -> "Smile"
-            Directive.Blink -> "Blink your eyes"
-            else -> "Hold still"
+            Directive.TurnLeft -> cfg.str("turn_left")
+            Directive.TurnRight -> cfg.str("turn_right")
+            Directive.LookUp -> cfg.str("look_up")
+            Directive.LookDown -> cfg.str("look_down")
+            Directive.Smile -> cfg.str("smile")
+            Directive.Blink -> cfg.str("blink")
+            else -> cfg.str("hold_still")
         }
     }
 
