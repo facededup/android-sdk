@@ -275,6 +275,8 @@ class FacededupActivity : AppCompatActivity() {
             overlay.ringColor = if (count > 1 || wrong) Color.parseColor("#E24B4A") else primaryColor
             overlay.wrong = wrong
             overlay.progress = prog
+            // Smart oval glow: how close the CURRENT action is to satisfied (smile/blink/turn).
+            overlay.actionProgress = if (present && !finishedNow && !positioning) liveness.subProgress else 0f
             overlay.directionDeg = dir
             overlay.success = finishedNow
             overlay.diagnostic = if (cfg.showDiagnostics) liveness.debugLine() else null

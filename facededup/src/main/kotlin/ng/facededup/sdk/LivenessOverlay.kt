@@ -22,7 +22,9 @@ import kotlin.math.sin
  */
 internal class LivenessOverlay(ctx: Context) : View(ctx) {
 
-    private val scrim = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#CCE0E0E0") }
+    // Opaque white surround so ONLY the oval (the capture area) shows the camera — the rest
+    // of the screen reads as a clean white frame, not a dimmed live view of the room.
+    private val scrim = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
     private val clear = Paint(Paint.ANTI_ALIAS_FLAG).apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR) }
     private val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE; strokeWidth = dp(5f); strokeCap = Paint.Cap.ROUND
@@ -54,6 +56,9 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
     var ringColor: Int = GREEN
     var progress: Float = 0f                 // target; the ring eases toward it (smooth)
     private var shownProgress: Float = 0f
+    /** Current action's live sub-progress (0..1) — drives the smart oval glow (smile/blink/turn). */
+    var actionProgress: Float = 0f
+    private var shownAction: Float = 0f
     var directionDeg: Float? = null
     var success: Boolean = false
     var wrong: Boolean = false
@@ -85,25 +90,35 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
 
     override fun onDraw(canvas: Canvas) {
         shownProgress += (progress - shownProgress) * 0.25f      // ease toward target (smooth)
+        shownAction += ((if (success) 1f else actionProgress) - shownAction) * 0.30f
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), scrim)
         canvas.drawOval(oval, clear)                   // punch the camera window
 
         val col = if (success) successColor else ringColor
-        // soft glow halo around the oval (pulses gently)
-        glow.color = col
-        glow.strokeWidth = ring.strokeWidth + dp(10f)
-        glow.alpha = (40 + 30 * (0.5 + 0.5 * sin(phase * 2 * Math.PI))).toInt().coerceIn(20, 90)
+        // SMART GLOW: the oval glows greener + brighter + wider as the current action
+        // (smile, blink, turn…) gets closer to satisfied — instant positive feedback.
+        val act = shownAction.coerceIn(0f, 1f)
+        val pulse = (0.5 + 0.5 * sin(phase * 2 * Math.PI)).toFloat()
+        glow.color = if (wrong) col else lerpColor(col, successColor, act)
+        glow.strokeWidth = ring.strokeWidth + dp(10f) + dp(16f) * act
+        glow.alpha = (40 + 30 * pulse + 150 * act).toInt().coerceIn(20, 220)
         canvas.drawOval(oval, glow); glow.alpha = 255
 
         // solid ring (green when placed/active; red on wrong move; breathes while positioning)
-        ring.color = col
-        ring.alpha = if (shownProgress < 0.02f && !success)
+        ring.color = if (wrong) col else lerpColor(col, successColor, act)
+        ring.alpha = if (shownProgress < 0.02f && !success && act < 0.02f)
             (170 + 70 * sin(phase * 2 * Math.PI)).toInt().coerceIn(90, 255) else 255
         canvas.drawOval(oval, ring); ring.alpha = 255
 
         diagnostic?.let { canvas.drawText(it, width / 2f, height - dp(70f), diag) }
 
-        if (success) { drawTick(canvas); return }
+        if (success) {
+            // Completed: fill the WHOLE ring green, then the tick.
+            prog.color = successColor
+            canvas.drawArc(oval, -90f, 360f, false, prog)
+            drawTick(canvas)
+            return
+        }
 
         // progress arc fills (eased) from the top as the action completes
         if (shownProgress > 0.02f) {
@@ -112,6 +127,15 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
         }
         // curved directional cue OUTSIDE the oval on the move side
         directionDeg?.let { drawCue(canvas, it) }
+    }
+
+    /** ARGB lerp a→b by t (0..1) — used to tint the ring/glow toward green as an action completes. */
+    private fun lerpColor(a: Int, b: Int, t: Float): Int {
+        val u = t.coerceIn(0f, 1f)
+        val ar = (a ushr 16) and 0xFF; val ag = (a ushr 8) and 0xFF; val ab = a and 0xFF
+        val br = (b ushr 16) and 0xFF; val bg = (b ushr 8) and 0xFF; val bb = b and 0xFF
+        val r = (ar + (br - ar) * u).toInt(); val g = (ag + (bg - ag) * u).toInt(); val bl = (ab + (bb - ab) * u).toInt()
+        return Color.rgb(r, g, bl)
     }
 
     private fun drawCue(canvas: Canvas, deg: Float) {
