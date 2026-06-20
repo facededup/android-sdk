@@ -28,6 +28,10 @@ data class FacededupLivenessConfig(
     val smileThreshold: Float = 0.5f,   // ML Kit smiling probability
     val blinkThreshold: Float = 0.4f,   // both-eyes-open probability below this = blink
     val neutralYawDeg: Float = 12f,     // "back to frontal" between turns
+    /** Smart scene quality (coaching + auto-brightness). */
+    val darkLuma: Float = 60f,            // avg Y (0..255) below this = "too dark" → boost screen
+    val minFaceCoverage: Float = 0.05f,   // face/frame area below this = "move closer"
+    val maxFaceCoverage: Float = 0.55f,   // face/frame area above this = "move back"
     /** UI. */
     val ringWidthDp: Float = 9f,
     val ringColor: String? = null,      // hex; default = theme primary / green
@@ -56,6 +60,14 @@ data class FacededupLivenessConfig(
         "smile" to "Smile", "blink" to "Blink your eyes", "hold_still" to "Hold still",
         "checking" to "Checking…", "only_one_face" to "Only one face, please",
         "great" to "Great", "cancel" to "Cancel",
+        // smart coaching + wait/offline
+        "too_dark" to "A bit dark — find better light",
+        "too_bright" to "Too bright — reduce glare",
+        "move_closer" to "Move a little closer",
+        "move_back" to "Move back a little",
+        "hold_steady" to "Hold steady",
+        "verifying" to "Hang tight — we're verifying your check…",
+        "offline_saved" to "No internet right now — your check is saved ✓\nYou'll get the result once you're back online.",
     )
     /** Resolve a UI string: developer override → built-in default → the key. */
     fun str(key: String): String = strings[key] ?: defaults[key] ?: key
@@ -88,6 +100,9 @@ data class FacededupLivenessConfig(
                 smileThreshold = f("smileThreshold", def.smileThreshold),
                 blinkThreshold = f("blinkThreshold", def.blinkThreshold),
                 neutralYawDeg = f("neutralYawDeg", def.neutralYawDeg),
+                darkLuma = f("darkLuma", def.darkLuma),
+                minFaceCoverage = f("minFaceCoverage", def.minFaceCoverage),
+                maxFaceCoverage = f("maxFaceCoverage", def.maxFaceCoverage),
                 ringWidthDp = f("ringWidthDp", def.ringWidthDp),
                 ringColor = str("ringColor", def.ringColor),
                 successColor = str("successColor", def.successColor),

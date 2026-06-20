@@ -11,7 +11,9 @@ import android.os.Bundle
 import android.util.Base64
 import android.view.Gravity
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
@@ -52,6 +54,7 @@ class FacededupActivity : AppCompatActivity() {
     private lateinit var overlay: LivenessOverlay
     private lateinit var title: TextView
     private lateinit var hint: TextView
+    private var shotView: ImageView? = null      // frozen last frame shown while deciding
 
     private val analysisExec = Executors.newSingleThreadExecutor()
     private val detector = FaceDetection.getClient(
@@ -75,6 +78,8 @@ class FacededupActivity : AppCompatActivity() {
     private var capturing = true
     private var done = false
     private var captureStartMs = 0L
+    private var lastBitmap: Bitmap? = null        // most recent rotated/mirrored frame (for freeze)
+    private var brightnessBoosted = false         // whether we forced the screen bright for low light
     private val movement by lazy { MovementMonitor(this) }
 
     private val cameraPermission =
@@ -116,6 +121,13 @@ class FacededupActivity : AppCompatActivity() {
             layoutParams = FrameLayout.LayoutParams(MATCH, MATCH)
             scaleType = PreviewView.ScaleType.FILL_CENTER
         }
+        // Frozen-frame layer: sits ON TOP of the live preview but UNDER the overlay, so when
+        // we stop the camera to decide, the user still sees their last shot inside the oval.
+        shotView = ImageView(this).apply {
+            layoutParams = FrameLayout.LayoutParams(MATCH, MATCH)
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            visibility = android.view.View.GONE
+        }
         overlay = LivenessOverlay(this).apply {
             layoutParams = FrameLayout.LayoutParams(MATCH, MATCH); ringColor = primaryColor
         }
@@ -132,7 +144,7 @@ class FacededupActivity : AppCompatActivity() {
             }
         }
         title = hint   // single instruction line drives the pill
-        root.addView(previewView); root.addView(overlay)
+        root.addView(previewView); shotView?.let { root.addView(it) }; root.addView(overlay)
         // Optional brand logo at the top (from app assets).
         cfg.logoAsset?.let { path ->
             runCatching {
@@ -204,25 +216,44 @@ class FacededupActivity : AppCompatActivity() {
         val media = proxy.image
         if (media == null || !capturing) { proxy.close(); return }
         val rot = proxy.imageInfo.rotationDegrees
+        val luma = avgLuma(proxy)               // scene brightness 0..255 from the Y plane
         val input = InputImage.fromMediaImage(media, rot)
         detector.process(input)
             .addOnSuccessListener { faces ->
                 val face = faces.firstOrNull()
-                onFaces(face, faces.size, proxy, rot)
+                onFaces(face, faces.size, proxy, rot, luma)
             }
             .addOnCompleteListener { proxy.close() }
     }
 
     // Runs on the ML Kit callback thread; capture reads the proxy (still open here).
-    private fun onFaces(face: Face?, count: Int, proxy: ImageProxy, rot: Int) {
+    private fun onFaces(face: Face?, count: Int, proxy: ImageProxy, rot: Int, luma: Int) {
         if (done) return
         val mirror = !agentMode
-        // Capture a frontal portrait once.
-        if (portrait == null && face != null && count == 1 && isFrontal(face))
+
+        // --- Smart scene quality: brightness + framing coaching ---------------------
+        val dark = luma < cfg.darkLuma
+        applyBrightness(dark)                       // auto-boost the screen in low light
+        // Face coverage = how much of the frame the face fills (rotation-invariant area ratio).
+        val coverage = if (face != null && count == 1) {
+            val b = face.boundingBox
+            (b.width().toFloat() * b.height()) / (proxy.width.toFloat() * proxy.height)
+        } else 0f
+        val tooFar = count == 1 && coverage in 0.0001f..cfg.minFaceCoverage
+        val tooClose = count == 1 && coverage > cfg.maxFaceCoverage
+        // Good light + sensible distance → safe to lock the resting baseline.
+        val qualityOk = !dark && !tooFar && !tooClose
+
+        // Capture a frontal portrait once (only when well lit + framed).
+        if (portrait == null && face != null && count == 1 && qualityOk && isFrontal(face))
             portrait = runCatching { jpegB64(proxy, rot, mirror) }.getOrNull()
 
+        // Keep the latest frame around so we can freeze it while deciding.
+        if (face != null && count == 1)
+            runCatching { toDisplayBitmap(proxy, rot, mirror) }.getOrNull()?.let { lastBitmap = it }
+
         val proves = liveness.current.proves
-        val satisfied = liveness.onFace(if (count == 1) face else null)   // require exactly one face
+        val satisfied = liveness.onFace(if (count == 1) face else null, qualityOk)   // require exactly one good face
         if (satisfied) {
             runCatching { jpegB64(proxy, rot, mirror) }.getOrNull()?.let { frames.add(LivenessClient.Frame(it, proves)) }
             vibrate(40)   // SHAP — haptic confirm on each completed action
@@ -230,6 +261,14 @@ class FacededupActivity : AppCompatActivity() {
         val present = face != null && count == 1
         val finishedNow = liveness.isFinished
         val wrong = present && !finishedNow && liveness.wrong
+        val positioning = liveness.current == ActiveLiveness.Directive.Positioning
+        // Coaching only matters while we're still getting the user framed, not mid-action.
+        val coachMsg = if (positioning && present) when {
+            dark -> cfg.str("too_dark")
+            tooFar -> cfg.str("move_closer")
+            tooClose -> cfg.str("move_back")
+            else -> null
+        } else null
         val prog = liveness.overallProgress
         val dir = if (present && !finishedNow) liveness.directionDeg else null
         runOnUiThread {
@@ -242,6 +281,7 @@ class FacededupActivity : AppCompatActivity() {
             hint.text = when {
                 finishedNow -> cfg.str("great")
                 count > 1 -> cfg.str("only_one_face")
+                coachMsg != null -> coachMsg
                 wrong -> wrongHint()
                 else -> liveness.hint(present)
             }
@@ -249,6 +289,28 @@ class FacededupActivity : AppCompatActivity() {
         if (liveness.isFinished && capturing) {
             capturing = false; vibrate(0)   // success buzz (double pattern)
             runOnUiThread { submit() }
+        }
+    }
+
+    /** Average luminance (0..255) sampled from the YUV Y plane — cheap scene-brightness probe. */
+    private fun avgLuma(proxy: ImageProxy): Int = runCatching {
+        val buf = proxy.planes[0].buffer; buf.rewind()
+        val n = buf.remaining(); if (n == 0) return 200
+        var sum = 0L; var cnt = 0; val step = maxOf(1, n / 2000)
+        var i = 0; while (i < n) { sum += (buf.get(i).toInt() and 0xFF); cnt++; i += step }
+        (sum / maxOf(1, cnt)).toInt()
+    }.getOrDefault(200)
+
+    /** Force the screen to full brightness in low light (helps the front camera); restore after. */
+    private fun applyBrightness(dark: Boolean) {
+        if (dark == brightnessBoosted) return
+        brightnessBoosted = dark
+        runOnUiThread {
+            runCatching {
+                val lp = window.attributes
+                lp.screenBrightness = if (dark) 1f else WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                window.attributes = lp
+            }
         }
     }
 
@@ -280,8 +342,16 @@ class FacededupActivity : AppCompatActivity() {
 
     private fun submit() {
         if (done) return
-        hint.text = cfg.str("checking")
         movement.stop()
+        // Freeze the last frame inside the oval so the camera can stop while we decide.
+        lastBitmap?.let { bmp ->
+            shotView?.apply { setImageBitmap(bmp); visibility = android.view.View.VISIBLE }
+        }
+        overlay.success = true; overlay.directionDeg = null; overlay.wrong = false
+        // Friendly waiting copy — and if we're offline, set expectations honestly.
+        val online = LivenessClient.isOnline(applicationContext)
+        hint.text = if (online) cfg.str("verifying") else cfg.str("offline_saved")
+        if (!online) hint.maxLines = 4
         val durationMs = if (captureStartMs > 0) System.currentTimeMillis() - captureStartMs else 0L
         val all = ArrayList<LivenessClient.Frame>()
         portrait?.let { all.add(LivenessClient.Frame(it, null)) }
@@ -302,12 +372,17 @@ class FacededupActivity : AppCompatActivity() {
     private fun isFrontal(f: Face) = abs(f.headEulerAngleY) < 10f && abs(f.headEulerAngleX) < 12f
 
     private fun jpegB64(proxy: ImageProxy, rot: Int, mirror: Boolean): String {
-        val bmp = proxy.toBitmap()
-        val m = Matrix(); m.postRotate(rot.toFloat()); if (mirror) m.postScale(-1f, 1f)
-        val out = Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, m, true)
+        val out = toDisplayBitmap(proxy, rot, mirror)
         val baos = ByteArrayOutputStream()
         out.compress(Bitmap.CompressFormat.JPEG, 88, baos)
         return Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
+    }
+
+    /** Upright, mirror-corrected bitmap for display (the frozen frame) and JPEG encoding. */
+    private fun toDisplayBitmap(proxy: ImageProxy, rot: Int, mirror: Boolean): Bitmap {
+        val bmp = proxy.toBitmap()
+        val m = Matrix(); m.postRotate(rot.toFloat()); if (mirror) m.postScale(-1f, 1f)
+        return Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, m, true)
     }
 
     private fun parseParams(query: String): Map<String, String> =

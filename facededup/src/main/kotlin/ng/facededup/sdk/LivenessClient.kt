@@ -89,7 +89,7 @@ internal object LivenessClient {
         }
     }
 
-    private fun isOnline(ctx: Context): Boolean = try {
+    fun isOnline(ctx: Context): Boolean = try {
         val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
         val net = cm.activeNetwork
         val caps = if (net != null) cm.getNetworkCapabilities(net) else null

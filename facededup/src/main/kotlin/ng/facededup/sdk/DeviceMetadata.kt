@@ -39,7 +39,7 @@ internal object DeviceMetadata {
         m["Fingerprint"] = safe { Build.FINGERPRINT }
         m["DeviceModel"] = "${Build.MANUFACTURER} ${Build.MODEL}"
         m["DeviceOS"] = "Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})"
-        m["SdkVersion"] = "2.0.0-alpha08"
+        m["SdkVersion"] = "2.0.0-alpha09"
         m["Locale"] = safe { ctx.resources.configuration.locales[0].toLanguageTag() }
         m["Timezone"] = TimeZone.getDefault().id
         m["ScreenResolution"] = safe {

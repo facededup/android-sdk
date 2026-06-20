@@ -108,7 +108,7 @@ internal class ActiveLiveness(private val cfg: FacededupLivenessConfig) {
         }
     }
 
-    fun onFace(face: Face?): Boolean {
+    fun onFace(face: Face?, qualityOk: Boolean = true): Boolean {
         if (isFinished || face == null) return false
         val yaw = face.headEulerAngleY * YAW_SIGN
         val pitch = face.headEulerAngleX * PITCH_SIGN
@@ -120,7 +120,9 @@ internal class ActiveLiveness(private val cfg: FacededupLivenessConfig) {
         if (!positioned) {
             wrong = false; directionDeg = null
             dbgYaw = yaw; dbgPitchDelta = 0f; dbgSmile = smile; dbgEyeOpen = eyeOpen
-            if (frontal) { posStable++; posPitchSum += pitch; posPitchN++ } else posStable = 0
+            // Only count toward "ready" when frontal AND quality is good (bright + well
+            // framed) — so the resting baseline is captured under good conditions.
+            if (frontal && qualityOk) { posStable++; posPitchSum += pitch; posPitchN++ } else posStable = 0
             subProgress = (posStable.toFloat() / posNeeded).coerceIn(0f, 1f)
             if (posStable >= posNeeded) {
                 neutralPitch = if (posPitchN > 0) posPitchSum / posPitchN else pitch
