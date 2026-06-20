@@ -71,6 +71,8 @@ class FacededupActivity : AppCompatActivity() {
     private val frames = ArrayList<LivenessClient.Frame>()
     private var capturing = true
     private var done = false
+    private var captureStartMs = 0L
+    private val movement by lazy { MovementMonitor(this) }
 
     private val cameraPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -136,6 +138,8 @@ class FacededupActivity : AppCompatActivity() {
             runCatching {
                 provider.unbindAll()
                 provider.bindToLifecycle(this, selector, preview, analysis)
+                captureStartMs = System.currentTimeMillis()
+                movement.start()   // sample motion/orientation/proximity during capture
             }.onFailure { finishWith("{\"type\":\"liveness\",\"outcome\":\"error\",\"error\":\"camera_init\"}") }
         }, ContextCompat.getMainExecutor(this))
     }
@@ -188,12 +192,20 @@ class FacededupActivity : AppCompatActivity() {
     private fun submit() {
         if (done) return
         title.text = "Checking…"; hint.text = "One moment"
+        movement.stop()
+        val durationMs = if (captureStartMs > 0) System.currentTimeMillis() - captureStartMs else 0L
         val all = ArrayList<LivenessClient.Frame>()
         portrait?.let { all.add(LivenessClient.Frame(it, null)) }
         all.addAll(frames)
         Thread {
+            // Anti-fraud metadata: VPN/proxy, device movement/orientation/proximity, battery,
+            // carrier, geolocation (if permitted), attestation chain, capture duration, etc.
+            val metadata = runCatching {
+                DeviceMetadata.collect(applicationContext, durationMs, 0,
+                    "$subject-${System.currentTimeMillis()}", movement.summary())
+            }.getOrNull()
             val json = LivenessClient.submit(applicationContext, base, license, subject,
-                method, liveness.actionKeys(), all)
+                method, liveness.actionKeys(), all, metadata)
             runOnUiThread { finishWith(json) }
         }.start()
     }
@@ -227,6 +239,7 @@ class FacededupActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        runCatching { movement.stop() }
         runCatching { analysisExec.shutdown() }
         runCatching { detector.close() }
     }

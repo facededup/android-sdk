@@ -19,7 +19,7 @@ internal object LivenessClient {
 
     /** Build the /v1/offline/submit request body. */
     private fun body(subjectId: String, method: String, actions: List<String>,
-                     txn: String, frames: List<Frame>): JSONObject {
+                     txn: String, frames: List<Frame>, metadata: Map<String, Any?>?): JSONObject {
         val arr = JSONArray()
         for (f in frames) arr.put(JSONObject().apply {
             put("image_b64", f.imageB64); put("proves_action", f.provesAction)
@@ -31,7 +31,16 @@ internal object LivenessClient {
             put("client_txn_id", txn)
             put("captured_at", isoNow())
             put("frames", arr)
+            metadata?.let { put("metadata", toJson(it) as JSONObject) }
         }
+    }
+
+    // Recursively convert Map/List/primitives to org.json types (nested-safe).
+    private fun toJson(v: Any?): Any = when (v) {
+        null -> JSONObject.NULL
+        is Map<*, *> -> JSONObject().apply { v.forEach { (k, value) -> put(k.toString(), toJson(value)) } }
+        is List<*> -> JSONArray().apply { v.forEach { put(toJson(it)) } }
+        else -> v
     }
 
     /**
@@ -41,9 +50,10 @@ internal object LivenessClient {
      *   verdict is delivered to the webhook once the worker drains the queue.
      */
     fun submit(ctx: Context, base: String, license: String, subjectId: String,
-               method: String, actions: List<String>, frames: List<Frame>): String {
+               method: String, actions: List<String>, frames: List<Frame>,
+               metadata: Map<String, Any?>? = null): String {
         val txn = "cap_" + System.currentTimeMillis() + "_" + (Math.random() * 1e6).toInt()
-        val payload = body(subjectId, method, actions, txn, frames)
+        val payload = body(subjectId, method, actions, txn, frames, metadata)
         val online = isOnline(ctx)
         if (online) {
             val resp = runCatching { post("${base.trimEnd('/')}/v1/offline/submit", license, payload.toString()) }
