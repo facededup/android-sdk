@@ -1109,23 +1109,28 @@
   function pitchDelta(f){ return (f?.pose?.pitch||0) - (neutralPitch||0); }
 
   // PHONE-TILT guard. Tilting the PHONE up/down also changes the apparent head pitch,
-  // so a user could pass look up/down without moving their head. We read the device's
-  // orientation (gyro/accelerometer) and, for vertical actions, REJECT progress while
-  // the phone itself is being tilted — the move must come from the HEAD ("phone still").
-  // Graceful: if the sensor is unavailable/denied (some WebViews, iOS w/o gesture),
-  // phoneBeta stays null and nothing is gated (falls back to pose-only).
-  let phoneBeta = null;
-  function _onOrient(e){ if(e && e.beta != null) phoneBeta = e.beta; }   // beta = front/back tilt ≈ phone pitch
+  // so a user could pass look up/down without moving their head. We track the device's
+  // pitch and, for vertical actions, REJECT progress while the phone itself is being
+  // tilted — the move must come from the HEAD ("phone still").
+  //
+  // SOURCE PRIORITY: the NATIVE SDK feeds phone pitch via window.__facededupPhone(deg)
+  // (Android SensorManager / iOS CoreMotion) — reliable inside a WebView. Web
+  // DeviceOrientationEvent is a fallback for plain mobile browsers; it frequently does
+  // NOT fire inside an Android WebView (loadDataWithBaseURL), which is why a native feed
+  // is needed. If neither is available, phoneBeta stays null and nothing is gated.
+  let phoneBeta = null, _phoneNative = false;
+  // Native bridge: the host app calls this every frame with the device pitch in degrees.
+  window.__facededupPhone = (deg)=>{ if(deg != null && isFinite(deg)){ phoneBeta = +deg; _phoneNative = true; } };
+  function _onOrient(e){ if(!_phoneNative && e && e.beta != null) phoneBeta = e.beta; }  // beta ≈ phone pitch (browser fallback)
   let _orientOn = false;
   function startOrientation(){
     if(_orientOn) return; _orientOn = true;
     try{
       const DOE = window.DeviceOrientationEvent;
       if(DOE && typeof DOE.requestPermission === "function"){
-        // iOS 13+ needs an explicit grant (best-effort; ignore if it rejects).
         DOE.requestPermission().then(s=>{ if(s==="granted") window.addEventListener("deviceorientation", _onOrient); }).catch(()=>{});
       } else if(DOE){
-        window.addEventListener("deviceorientation", _onOrient);   // Android WebView: works over https
+        window.addEventListener("deviceorientation", _onOrient);
       }
     }catch(_){}
   }
@@ -1878,10 +1883,16 @@
       setPrompt("position"); setRing(0, COLOR.idle);
       // camera
       const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:facingConstraint(),width:{ideal:720},height:{ideal:960}},audio:false});
-      video.srcObject=stream; await video.play();
-      // Android WebView re-shows its ▶ overlay if the <video> ever pauses (e.g. a
-      // transient stall). Keep it playing so the play button never appears on the oval.
-      video.addEventListener("pause", ()=>{ try{ video.play().catch(()=>{}); }catch(_){} });
+      video.srcObject=stream;
+      // ROBUST PLAY: in some Android WebViews the first play() rejects (or never
+      // starts), leaving a grey oval with the ▶ overlay. Retry play() on the media
+      // events AND poll for a few seconds until frames actually flow — the overlay
+      // only ever shows while the <video> is paused, so we make sure it isn't.
+      const _kick = ()=>{ try{ video.play().catch(()=>{}); }catch(_){} };
+      _kick();
+      ["loadedmetadata","loadeddata","canplay","pause","stalled","suspend"].forEach(ev=>video.addEventListener(ev,_kick));
+      let _pk=0; const _pkT=setInterval(()=>{ if(video.paused) _kick();
+        if(++_pk>20 || (video.readyState>=2 && !video.paused)) clearInterval(_pkT); }, 250);
       startOrientation();   // begin reading phone tilt (rejects phone-tilt cheating on up/down)
       setPrompt("position","Focusing…"); await settleFocus();   // wait for sharp focus -> far fewer PAD/quality false-fails
       startVideoRec(stream);   // capture the attempt for review evidence

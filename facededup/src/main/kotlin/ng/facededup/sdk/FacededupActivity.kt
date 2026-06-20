@@ -4,6 +4,10 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.os.Bundle
 import android.util.Base64
 import android.view.ViewGroup
@@ -51,6 +55,28 @@ class FacededupActivity : AppCompatActivity() {
     private var offlineMode = false
     private var apiBase = ""
     private var licenseKey = ""
+
+    // Phone-tilt feed: the liveness flow rejects look up/down done by tilting the PHONE
+    // (vs the head). Web DeviceOrientationEvent does NOT fire reliably inside a WebView,
+    // so we read the device pitch natively (rotation-vector sensor) and push it to the
+    // page via window.__facededupPhone(deg). ~20 Hz, throttled.
+    private var sensorManager: SensorManager? = null
+    private var rotationSensor: Sensor? = null
+    private var lastPhonePush = 0L
+    private val rotMatrix = FloatArray(9)
+    private val orientation = FloatArray(3)
+    private val orientListener = object : SensorEventListener {
+        override fun onSensorChanged(e: SensorEvent) {
+            val now = System.currentTimeMillis()
+            if (now - lastPhonePush < 50) return        // ~20 Hz
+            lastPhonePush = now
+            SensorManager.getRotationMatrixFromVector(rotMatrix, e.values)
+            SensorManager.getOrientation(rotMatrix, orientation)
+            val pitchDeg = orientation[1] * 180.0 / Math.PI   // radians -> degrees
+            web.evaluateJavascript("window.__facededupPhone && window.__facededupPhone($pitchDeg)", null)
+        }
+        override fun onAccuracyChanged(s: Sensor?, a: Int) {}
+    }
 
     private fun isOnline(): Boolean = try {
         val cm = getSystemService(CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
@@ -131,10 +157,23 @@ class FacededupActivity : AppCompatActivity() {
             }
         }
 
+        sensorManager = getSystemService(SENSOR_SERVICE) as? SensorManager
+        rotationSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+
         val needCam = ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED
         val needMic = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED
         if (!needCam && !needMic) loadFlow()
         else mediaPermissions.launch(arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO))
+    }
+
+    override fun onResume() {
+        super.onResume()
+        rotationSensor?.let { sensorManager?.registerListener(orientListener, it, SensorManager.SENSOR_DELAY_GAME) }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        sensorManager?.unregisterListener(orientListener)
     }
 
     private fun loadFlow() {
