@@ -1107,6 +1107,28 @@
     if(Math.abs(p - neutralPitch) < 8) neutralPitch += (p - neutralPitch) * 0.05; // ignore the actual look
   }
   function pitchDelta(f){ return (f?.pose?.pitch||0) - (neutralPitch||0); }
+
+  // PHONE-TILT guard. Tilting the PHONE up/down also changes the apparent head pitch,
+  // so a user could pass look up/down without moving their head. We read the device's
+  // orientation (gyro/accelerometer) and, for vertical actions, REJECT progress while
+  // the phone itself is being tilted — the move must come from the HEAD ("phone still").
+  // Graceful: if the sensor is unavailable/denied (some WebViews, iOS w/o gesture),
+  // phoneBeta stays null and nothing is gated (falls back to pose-only).
+  let phoneBeta = null;
+  function _onOrient(e){ if(e && e.beta != null) phoneBeta = e.beta; }   // beta = front/back tilt ≈ phone pitch
+  let _orientOn = false;
+  function startOrientation(){
+    if(_orientOn) return; _orientOn = true;
+    try{
+      const DOE = window.DeviceOrientationEvent;
+      if(DOE && typeof DOE.requestPermission === "function"){
+        // iOS 13+ needs an explicit grant (best-effort; ignore if it rejects).
+        DOE.requestPermission().then(s=>{ if(s==="granted") window.addEventListener("deviceorientation", _onOrient); }).catch(()=>{});
+      } else if(DOE){
+        window.addEventListener("deviceorientation", _onOrient);   // Android WebView: works over https
+      }
+    }catch(_){}
+  }
   // Preload the engine in the background (during method-select / consent) so it's
   // ready by capture time — the user never waits on a "loading" message.
   let mpPromise = null;
@@ -1572,9 +1594,9 @@
     // sit below the face, so absolute pitch is biased). up = look-UP (delta-),
     // down = look-DOWN (delta+). ~8° of deliberate tilt = satisfied.
     const dp = pitchDelta(f);
-    if(action==="look_up") return Math.max(0,-dp) / 8;
-    if(action==="look_down") return Math.max(0,dp) / 8;
-    if(action==="nod") return Math.max(0,dp) / 12;   // nod = look DOWN (delta+)
+    if(action==="look_up") return Math.max(0,-dp) / 11;   // deliberate head tilt (not a twitch / phone wobble)
+    if(action==="look_down") return Math.max(0,dp) / 11;
+    if(action==="nod") return Math.max(0,dp) / 14;   // nod = look DOWN (delta+)
     return 0;
   }
 
@@ -1655,16 +1677,25 @@
     let best=null, bestP=0, _hitAt=0, _sawLow=false; const got=[]; const t=performance.now();
     // Freeze the neutral-pitch baseline while a vertical action is in progress so the
     // user's deliberate up/down tilt can't drag the baseline it's measured against.
-    _verticalActive = (action==="look_up" || action==="look_down" || action==="nod");
+    const isVertical = (action==="look_up" || action==="look_down" || action==="nod");
+    _verticalActive = isVertical;
+    const phoneBeta0 = phoneBeta;   // phone tilt at action start (null if no sensor)
     const need = STRICT_NEED[strictness] || 1, requireBaseline = strictness!=="lenient";
     while(performance.now()-t<ms){
-      const prog = actionProgress(action, latest)/need;   // strictness raises the bar
+      let prog = actionProgress(action, latest)/need;   // strictness raises the bar
+      // Phone-tilt guard: on vertical actions the move must come from the HEAD — while
+      // the PHONE itself is being tilted, suppress progress so it can't complete. No-op
+      // when the orientation sensor is unavailable (phoneBeta null → falls back to pose).
+      const phoneCheating = isVertical && phoneBeta!=null && phoneBeta0!=null
+                            && Math.abs(phoneBeta - phoneBeta0) > 8;
+      if(phoneCheating) prog = Math.min(prog, 0.2);
       const p=Math.min(1, prog);
       if(prog < 0.35) _sawLow=true;                        // saw a neutral baseline
       // Is the user doing the WRONG thing? (wrong way, looking down for "up",
-      // or no face in frame.)
+      // tilting the phone instead of the head, or no face in frame.)
       let wrong = false;
-      if(!latest?.face) wrong = true;
+      if(phoneCheating) wrong = true;
+      else if(!latest?.face) wrong = true;
       else if(action==="turn_left")  wrong = (latest.noseOff||0) > 0.05;
       else if(action==="turn_right") wrong = (latest.noseOff||0) < -0.05;
       else if(action==="look_up")    wrong = pitchDelta(latest) > 5;   // looking DOWN when asked UP
@@ -1691,7 +1722,8 @@
       // Smart nudge: tell them what's wrong — never silently fail.
       let hint = `${step(action).hint} ${Math.round(p*100)}%`;
       if(wrong && p<0.6){
-        hint = !latest?.face ? "Keep your face in the oval"
+        hint = phoneCheating ? "📵 Hold the phone still — move your head"
+             : !latest?.face ? "Keep your face in the oval"
              : action==="look_up" ? "☝️ Tilt your head up"
              : action==="look_down" ? "👇 Tilt your head down"
              : isTurn ? "↪ Turn the other way" : hint;
@@ -1847,6 +1879,10 @@
       // camera
       const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:facingConstraint(),width:{ideal:720},height:{ideal:960}},audio:false});
       video.srcObject=stream; await video.play();
+      // Android WebView re-shows its ▶ overlay if the <video> ever pauses (e.g. a
+      // transient stall). Keep it playing so the play button never appears on the oval.
+      video.addEventListener("pause", ()=>{ try{ video.play().catch(()=>{}); }catch(_){} });
+      startOrientation();   // begin reading phone tilt (rejects phone-tilt cheating on up/down)
       setPrompt("position","Focusing…"); await settleFocus();   // wait for sharp focus -> far fewer PAD/quality false-fails
       startVideoRec(stream);   // capture the attempt for review evidence
       // The on-device MediaPipe engine is ONLY for live coaching + action detection.
