@@ -30,7 +30,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val title = TextView(this).apply {
-            text = "Facededup Demo 1.2.1"
+            text = "Facededup Demo 2.0.0 (native)"
             textSize = 22f
             gravity = Gravity.CENTER
         }

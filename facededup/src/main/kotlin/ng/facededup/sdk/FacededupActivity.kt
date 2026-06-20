@@ -1,36 +1,40 @@
 package ng.facededup.sdk
 
 import android.Manifest
-import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.hardware.Sensor
-import android.hardware.SensorEvent
-import android.hardware.SensorEventListener
-import android.hardware.SensorManager
+import android.graphics.Bitmap
+import android.graphics.Color
+import android.graphics.Matrix
 import android.os.Bundle
 import android.util.Base64
+import android.view.Gravity
 import android.view.ViewGroup
-import android.webkit.HttpAuthHandler
-import android.webkit.JavascriptInterface
-import android.webkit.PermissionRequest
-import android.webkit.WebChromeClient
-import android.webkit.WebResourceRequest
-import android.webkit.WebResourceResponse
-import android.webkit.WebSettings
-import android.webkit.WebView
-import android.webkit.WebViewClient
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.ImageProxy
+import androidx.camera.core.Preview
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
-import com.google.android.play.core.integrity.IntegrityManagerFactory
-import com.google.android.play.core.integrity.IntegrityTokenRequest
-import org.json.JSONObject
+import com.google.mlkit.vision.face.Face
+import com.google.mlkit.vision.face.FaceDetection
+import com.google.mlkit.vision.face.FaceDetectorOptions
+import com.google.mlkit.vision.common.InputImage
+import java.io.ByteArrayOutputStream
+import java.util.concurrent.Executors
+import kotlin.math.abs
 
 /**
- * Internal WebView host for the hosted Facededup flow. Grants the camera/mic to the
- * page's getUserMedia, supplies the demo HTTP Basic password, and finishes with the
- * result the flow reports through the `FacededupNative.onResult(json)` bridge.
+ * NATIVE liveness capture (2.0) — CameraX preview + ML Kit face detection drive an
+ * active-liveness challenge ([ActiveLiveness]); proving frames submit to the Facededup
+ * backend ([LivenessClient]) and the typed result is returned via ActivityResult.
+ * Replaces the 1.x WebView host — no WebView, no WASM, no getUserMedia.
  */
 class FacededupActivity : AppCompatActivity() {
 
@@ -43,268 +47,184 @@ class FacededupActivity : AppCompatActivity() {
         const val EXTRA_RESULT = "facededup.result"
     }
 
-    private lateinit var web: WebView
-    private var password: String? = null
-    private var cloudProjectNumber: Long = 0L
+    private lateinit var previewView: PreviewView
+    private lateinit var overlay: LivenessOverlay
+    private lateinit var title: TextView
+    private lateinit var hint: TextView
+
+    private val analysisExec = Executors.newSingleThreadExecutor()
+    private val detector = FaceDetection.getClient(
+        FaceDetectorOptions.Builder()
+            .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
+            .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_ALL)   // smile probability
+            .build())
+
+    private lateinit var liveness: ActiveLiveness
+    private var base = ""
+    private var license = ""
+    private var subject = "user"
+    private var method = "face_liveness"
+    private var agentMode = false
+    private var primaryColor = Color.parseColor("#1E9C69")
+
+    private var portrait: String? = null
+    private val frames = ArrayList<LivenessClient.Frame>()
+    private var capturing = true
     private var done = false
-    private var detector: FacededupMpDetector? = null
-    private val detectExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
-    // Offline capture: when there's no network at launch we serve the flow from the
-    // APK (localFlow) and the page queues frames to OfflineQueue; OfflineSubmitWorker
-    // submits to /v1/offline/submit on reconnect and the verdict is delivered by webhook.
-    private var offlineMode = false
-    private var apiBase = ""
-    private var licenseKey = ""
 
-    // Phone-tilt feed: the liveness flow rejects look up/down done by tilting the PHONE
-    // (vs the head). Web DeviceOrientationEvent does NOT fire reliably inside a WebView,
-    // so we read the device pitch natively (rotation-vector sensor) and push it to the
-    // page via window.__facededupPhone(deg). ~20 Hz, throttled.
-    private var sensorManager: SensorManager? = null
-    private var rotationSensor: Sensor? = null
-    private var lastPhonePush = 0L
-    private val rotMatrix = FloatArray(9)
-    private val orientation = FloatArray(3)
-    private val orientListener = object : SensorEventListener {
-        override fun onSensorChanged(e: SensorEvent) {
-            val now = System.currentTimeMillis()
-            if (now - lastPhonePush < 50) return        // ~20 Hz
-            lastPhonePush = now
-            SensorManager.getRotationMatrixFromVector(rotMatrix, e.values)
-            SensorManager.getOrientation(rotMatrix, orientation)
-            val pitchDeg = orientation[1] * 180.0 / Math.PI   // radians -> degrees
-            web.evaluateJavascript("window.__facededupPhone && window.__facededupPhone($pitchDeg)", null)
+    private val cameraPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) startCamera() else finishWith("{\"type\":\"liveness\",\"outcome\":\"error\",\"error\":\"camera_denied\"}")
         }
-        override fun onAccuracyChanged(s: Sensor?, a: Int) {}
-    }
 
-    private fun isOnline(): Boolean = try {
-        val cm = getSystemService(CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
-        val net = cm.activeNetwork
-        val caps = if (net != null) cm.getNetworkCapabilities(net) else null
-        caps?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) ?: false
-    } catch (e: Exception) { true }   // can't tell -> assume online (load the live page)
-
-    // Request CAMERA *and* RECORD_AUDIO together: the read-a-number / voice challenge
-    // needs the mic, and the WebView can only grant the page mic access if the app holds
-    // RECORD_AUDIO. We proceed regardless of the mic grant (motion-only liveness still
-    // works without it) — loadFlow runs once the dialog is dismissed.
-    private val mediaPermissions =
-        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { loadFlow() }
-
-    @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        password = intent.getStringExtra(EXTRA_PASSWORD)
-        cloudProjectNumber = intent.getLongExtra(EXTRA_CLOUD_PROJECT, 0L)
+        base = (intent.getStringExtra(EXTRA_BASE_URL) ?: "").trimEnd('/')
+        val params = parseParams(intent.getStringExtra(EXTRA_PARAMS).orEmpty())
+        license = params["license"] ?: ""
+        subject = intent.getStringExtra(EXTRA_SUBJECT) ?: params["subject"] ?: "user"
+        method = params["method"] ?: "face_liveness"
+        agentMode = params["agent"] == "1"
+        params["color"]?.let { runCatching { primaryColor = Color.parseColor(it) } }
+        liveness = ActiveLiveness(emptyList())   // default sequence (turn L/R + smile)
 
-        web = WebView(this).apply {
-            layoutParams = ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-        }
-        setContentView(web)
+        buildUi(params["bg"])
+        if (base.isEmpty()) { finishWith("{\"type\":\"liveness\",\"outcome\":\"error\",\"error\":\"no_base_url\"}"); return }
 
-        web.settings.apply {
-            javaScriptEnabled = true
-            domStorageEnabled = true
-            mediaPlaybackRequiresUserGesture = false           // camera can auto-start
-            mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
-            // Always fetch the hosted flow fresh. A cached page can otherwise pin a
-            // device to an OLD build of the flow (the WebView HTTP cache survives
-            // app force-close), so updates we ship server-side never reach it.
-            cacheMode = WebSettings.LOAD_DEFAULT   // cache heavy static assets (WASM/model/fonts); the _cb param keeps the HTML fresh
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
+            startCamera()
+        else cameraPermission.launch(Manifest.permission.CAMERA)
+    }
+
+    private fun buildUi(bgHex: String?) {
+        val root = FrameLayout(this)
+        runCatching { bgHex?.let { root.setBackgroundColor(Color.parseColor(it)) } }
+        previewView = PreviewView(this).apply {
+            layoutParams = FrameLayout.LayoutParams(MATCH, MATCH)
+            scaleType = PreviewView.ScaleType.FILL_CENTER
         }
-        web.addJavascriptInterface(Bridge(), "FacededupNative")
-        // Native MediaPipe Tasks detection is OPTIONAL. Probe for the tasks-vision class
-        // WITHOUT referencing it directly — if the integrator didn't add the dependency,
-        // constructing FacededupMpDetector (which references FaceLandmarker) would throw
-        // NoClassDefFoundError at class-load, BEFORE any try/catch inside it can run, and
-        // crash the host app. So gate construction on Class.forName and silently fall back
-        // to the bundled WASM engine when MediaPipe isn't present. loadFlow() passes
-        // ?native=mp only when the detector actually started.
-        detector = try {
-            Class.forName("com.google.mediapipe.tasks.vision.facelandmarker.FaceLandmarker")
-            FacededupMpDetector(applicationContext)
-        } catch (t: Throwable) {
-            null   // tasks-vision not on the classpath → use the bundled WASM detection
+        overlay = LivenessOverlay(this).apply {
+            layoutParams = FrameLayout.LayoutParams(MATCH, MATCH); ringColor = primaryColor
         }
-        web.addJavascriptInterface(DetectBridge(), "FacededupDetect")
-        web.webChromeClient = object : WebChromeClient() {
-            override fun onPermissionRequest(request: PermissionRequest) {
-                runOnUiThread { request.grant(request.resources) }   // camera + mic
+        val top = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(48, 96, 48, 0)
+            layoutParams = FrameLayout.LayoutParams(MATCH, WRAP)
+        }
+        title = TextView(this).apply {
+            text = "Position your face"; textSize = 24f; setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER; setTypeface(typeface, android.graphics.Typeface.BOLD)
+        }
+        hint = TextView(this).apply {
+            text = "Center your face in the oval"; textSize = 16f; setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER; setPadding(0, 16, 0, 0)
+        }
+        top.addView(title); top.addView(hint)
+        root.addView(previewView); root.addView(overlay); root.addView(top)
+        setContentView(root)
+    }
+
+    private fun startCamera() {
+        val future = ProcessCameraProvider.getInstance(this)
+        future.addListener({
+            val provider = future.get()
+            val preview = Preview.Builder().build().also { it.setSurfaceProvider(previewView.surfaceProvider) }
+            val analysis = ImageAnalysis.Builder()
+                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST).build()
+            analysis.setAnalyzer(analysisExec, ::analyze)
+            val selector = if (agentMode) CameraSelector.DEFAULT_BACK_CAMERA else CameraSelector.DEFAULT_FRONT_CAMERA
+            runCatching {
+                provider.unbindAll()
+                provider.bindToLifecycle(this, selector, preview, analysis)
+            }.onFailure { finishWith("{\"type\":\"liveness\",\"outcome\":\"error\",\"error\":\"camera_init\"}") }
+        }, ContextCompat.getMainExecutor(this))
+    }
+
+    @androidx.camera.core.ExperimentalGetImage
+    private fun analyze(proxy: ImageProxy) {
+        val media = proxy.image
+        if (media == null || !capturing) { proxy.close(); return }
+        val rot = proxy.imageInfo.rotationDegrees
+        val input = InputImage.fromMediaImage(media, rot)
+        detector.process(input)
+            .addOnSuccessListener { faces ->
+                val face = faces.firstOrNull()
+                onFaces(face, faces.size, proxy, rot)
+            }
+            .addOnCompleteListener { proxy.close() }
+    }
+
+    // Runs on the ML Kit callback thread; capture reads the proxy (still open here).
+    private fun onFaces(face: Face?, count: Int, proxy: ImageProxy, rot: Int) {
+        if (done) return
+        val mirror = !agentMode
+        // Capture a frontal portrait once.
+        if (portrait == null && face != null && count == 1 && isFrontal(face))
+            portrait = runCatching { jpegB64(proxy, rot, mirror) }.getOrNull()
+
+        val proves = liveness.current.proves
+        val satisfied = liveness.onFace(if (count == 1) face else null)   // require exactly one face
+        if (satisfied) {
+            runCatching { jpegB64(proxy, rot, mirror) }.getOrNull()?.let { frames.add(LivenessClient.Frame(it, proves)) }
+        }
+        val present = face != null && count == 1
+        runOnUiThread {
+            overlay.ringColor = if (count > 1) Color.parseColor("#E24B4A") else primaryColor
+            title.text = if (liveness.isFinished) "Great" else "Step ${liveness.progress + 1} of ${liveness.total}"
+            hint.text = when {
+                count > 1 -> "Only one face, please"
+                else -> liveness.hint(present)
             }
         }
-        web.webViewClient = object : WebViewClient() {
-            // Serve the MediaPipe engine + model from the APK (offline, instant, no data).
-            override fun shouldInterceptRequest(
-                view: WebView, request: WebResourceRequest,
-            ): WebResourceResponse? {
-                val url = request.url.toString()
-                // ALWAYS serve the UI (page + scripts + MediaPipe) from the APK so it
-                // opens instantly and can NEVER fail with "Web page not available".
-                // Only the API (/v1/*) is left to hit the network — online it reaches
-                // the server, offline the page queues the capture for later submit.
-                return localMediaPipe(this@FacededupActivity, url)
-                    ?: localFlow(this@FacededupActivity, url)
-                    ?: super.shouldInterceptRequest(view, request)
-            }
-
-            override fun onReceivedHttpAuthRequest(
-                view: WebView, handler: HttpAuthHandler, host: String, realm: String,
-            ) {
-                val pw = password
-                if (!pw.isNullOrEmpty()) handler.proceed("swiftend", pw) else handler.cancel()
-            }
-        }
-
-        sensorManager = getSystemService(SENSOR_SERVICE) as? SensorManager
-        rotationSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
-
-        val needCam = ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED
-        val needMic = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED
-        if (!needCam && !needMic) loadFlow()
-        else mediaPermissions.launch(arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO))
+        if (liveness.isFinished && capturing) { capturing = false; runOnUiThread { submit() } }
     }
 
-    override fun onResume() {
-        super.onResume()
-        rotationSensor?.let { sensorManager?.registerListener(orientListener, it, SensorManager.SENSOR_DELAY_GAME) }
+    private fun submit() {
+        if (done) return
+        title.text = "Checking…"; hint.text = "One moment"
+        val all = ArrayList<LivenessClient.Frame>()
+        portrait?.let { all.add(LivenessClient.Frame(it, null)) }
+        all.addAll(frames)
+        Thread {
+            val json = LivenessClient.submit(applicationContext, base, license, subject,
+                method, liveness.actionKeys(), all)
+            runOnUiThread { finishWith(json) }
+        }.start()
     }
 
-    override fun onPause() {
-        super.onPause()
-        sensorManager?.unregisterListener(orientListener)
+    private fun isFrontal(f: Face) = abs(f.headEulerAngleY) < 10f && abs(f.headEulerAngleX) < 12f
+
+    private fun jpegB64(proxy: ImageProxy, rot: Int, mirror: Boolean): String {
+        val bmp = proxy.toBitmap()
+        val m = Matrix(); m.postRotate(rot.toFloat()); if (mirror) m.postScale(-1f, 1f)
+        val out = Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, m, true)
+        val baos = ByteArrayOutputStream()
+        out.compress(Bitmap.CompressFormat.JPEG, 88, baos)
+        return Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
     }
 
-    private fun loadFlow() {
-        val base = (intent.getStringExtra(EXTRA_BASE_URL) ?: "").trimEnd('/')
-        if (base.isEmpty()) { finish(); return }
-        val params = intent.getStringExtra(EXTRA_PARAMS).orEmpty()
-        // Offline support: detect connectivity at launch + remember base/license so
-        // the page can queue captures and the worker can submit them on reconnect.
-        apiBase = base
-        licenseKey = Regex("(?:^|&)license=([^&]+)").find(params)?.groupValues?.get(1) ?: ""
-        offlineMode = !isOnline()
-        val cb = "_cb=" + System.currentTimeMillis()
-        // Tell the flow to use native MediaPipe detection (only if the engine started;
-        // otherwise it falls back to the bundled WASM Worker automatically).
-        val nativeFlag = if (detector?.isReady == true) "&native=mp" else ""
-        val query = if (params.isEmpty()) cb else "$params&$cb"
-        // The base URL keeps the origin = the API host, so getUserMedia is a secure
-        // context and the page's /v1 API calls stay same-origin (no CORS).
-        val url = "$base/demo/?$query$nativeFlag"
-        // Load the verification UI straight from the APK (loadDataWithBaseURL) instead
-        // of fetching it over the network. The main frame therefore NEVER touches the
-        // network, so the SDK can't show "Web page not available"; sub-resources are
-        // served by shouldInterceptRequest (localFlow), and only /v1 API calls go out.
-        val bundled = try {
-            assets.open("flow/index.html").bufferedReader().use { it.readText() }
-        } catch (e: Exception) { "" }
-        if (bundled.isNotEmpty()) {
-            web.loadDataWithBaseURL(url, bundled, "text/html", "UTF-8", null)
-        } else {
-            web.loadUrl(url)   // fallback only if the bundled page is somehow missing
-        }
-    }
+    private fun parseParams(query: String): Map<String, String> =
+        query.split("&").mapNotNull {
+            val i = it.indexOf('='); if (i <= 0) null else
+                runCatching { java.net.URLDecoder.decode(it.substring(0, i), "UTF-8") to
+                    java.net.URLDecoder.decode(it.substring(i + 1), "UTF-8") }.getOrNull()
+        }.toMap()
 
     private fun finishWith(json: String) {
         if (done) return
-        done = true
-        // The payload can carry a selfie + 4-8 base64 frames (~1-2 MB), which can
-        // exceed the Binder limit for Intent extras. Pass it via the in-process
-        // holder; keep the Intent extra only as a small fallback (no images) so a
-        // big transaction never throws TransactionTooLargeException.
+        done = true; capturing = false
         FacededupResultHolder.json = json
         val fallback = if (json.length <= 256 * 1024) json else "{\"type\":\"liveness\"}"
         setResult(RESULT_OK, Intent().putExtra(EXTRA_RESULT, fallback))
         finish()
     }
 
-    @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
-    override fun onBackPressed() {
-        if (web.canGoBack()) web.goBack()
-        else { setResult(RESULT_CANCELED); super.onBackPressed() }
-    }
-
     override fun onDestroy() {
-        runCatching { detectExecutor.shutdownNow() }
-        runCatching { detector?.close() }
-        runCatching { (web.parent as? ViewGroup)?.removeView(web); web.destroy() }
         super.onDestroy()
-    }
-
-    // --- Device attestation (Annex A3e): Play Integrity bound to the challenge nonce ---
-
-    /** Mint a Play Integrity token for [nonce] and hand it back to the web flow via
-     *  `window.__onFacededupAttestation(token)`. On any failure (or no project number
-     *  configured) it returns null so verify proceeds with attestation 'unverified'. */
-    private fun requestPlayIntegrity(nonce: String) {
-        if (cloudProjectNumber <= 0L) { deliverAttestation(null); return }
-        // Play Integrity requires a URL-safe, unpadded nonce; the server accepts the
-        // raw nonce or its base64url form (see play_integrity._nonce_matches).
-        val encoded = Base64.encodeToString(
-            nonce.toByteArray(Charsets.UTF_8),
-            Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING,
-        )
-        runCatching {
-            IntegrityManagerFactory.create(applicationContext)
-                .requestIntegrityToken(
-                    IntegrityTokenRequest.builder()
-                        .setNonce(encoded)
-                        .setCloudProjectNumber(cloudProjectNumber)
-                        .build(),
-                )
-                .addOnSuccessListener { resp -> deliverAttestation(resp.token()) }
-                .addOnFailureListener { _ -> deliverAttestation(null) }
-        }.onFailure { deliverAttestation(null) }
-    }
-
-    private fun deliverAttestation(token: String?) {
-        val arg = if (token != null) JSONObject.quote(token) else "null"
-        runOnUiThread {
-            web.evaluateJavascript(
-                "window.__onFacededupAttestation && window.__onFacededupAttestation($arg)", null)
-        }
-    }
-
-    private inner class Bridge {
-        @JavascriptInterface
-        fun onResult(json: String) { runOnUiThread { finishWith(json) } }
-
-        /** Called by the web flow before /verify; replies via __onFacededupAttestation. */
-        @JavascriptInterface
-        fun requestAttestation(nonce: String) { runOnUiThread { requestPlayIntegrity(nonce) } }
-
-        /** OFFLINE capture: the flow couldn't reach the server, so it hands us the
-         *  captured frames (a /v1/offline/submit body). We persist it and schedule a
-         *  network-constrained submit; the verdict is later delivered by webhook. */
-        @JavascriptInterface
-        fun queueOffline(payloadJson: String) {
-            runCatching {
-                val o = JSONObject(payloadJson)
-                o.put("_base", apiBase)         // worker needs the API origin
-                o.put("_license", licenseKey)   // and the tenant key to authenticate
-                OfflineQueue.enqueue(applicationContext, o.toString())
-                OfflineSubmitWorker.schedule(applicationContext)
-            }
-        }
-    }
-
-    /** Native-detection bridge: the flow ships a base64 JPEG per frame; we run MediaPipe
-     *  off the UI thread and reply via window.__facededupPose(json). */
-    private inner class DetectBridge {
-        @JavascriptInterface
-        fun detect(jpegBase64: String) {
-            val d = detector ?: return
-            runCatching {
-                detectExecutor.execute {
-                    val json = d.detect(jpegBase64)
-                    web.post {
-                        web.evaluateJavascript(
-                            "window.__facededupPose && window.__facededupPose($json)", null)
-                    }
-                }
-            }
-        }
+        runCatching { analysisExec.shutdown() }
+        runCatching { detector.close() }
     }
 }
+
+private const val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
+private const val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT

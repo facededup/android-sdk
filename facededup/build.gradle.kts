@@ -16,7 +16,7 @@ plugins {
 }
 
 group = "ng.facededup"
-version = "1.2.1"
+version = "2.0.0-alpha01"
 
 android {
     namespace = "ng.facededup.sdk"
@@ -44,14 +44,17 @@ dependencies {
     implementation("androidx.work:work-runtime-ktx:2.9.1")
     // Device attestation (Annex A3e): Play Integrity token bound to the challenge nonce.
     implementation("com.google.android.play:integrity:1.4.0")
-    // Native on-device face detection (hybrid): SAME FaceLandmarker model as the web
-    // flow, so signals match processLandmarks() exactly. OPTIONAL — compileOnly so it
-    // is NOT forced on every integrator (it would otherwise raise their minSdk to 24
-    // and add ~15MB of native libs). Integrators who want native detection add
-    // `implementation("com.google.mediapipe:tasks-vision:0.10.14")` themselves; the SDK
-    // probes for it at runtime (Class.forName) and falls back to the bundled WASM engine
-    // when it's absent, so a missing dependency never crashes the host app.
-    compileOnly("com.google.mediapipe:tasks-vision:0.10.14")
+
+    // --- 2.0 NATIVE capture (replaces the WebView) ---
+    // CameraX: front-camera preview + frame analysis + still capture.
+    implementation("androidx.camera:camera-core:1.3.4")
+    implementation("androidx.camera:camera-camera2:1.3.4")
+    implementation("androidx.camera:camera-lifecycle:1.3.4")
+    implementation("androidx.camera:camera-view:1.3.4")
+    // ML Kit on-device face detection — head Euler angles + smile probability drive
+    // the active-liveness challenge (no WebView, no WASM, no model download).
+    implementation("com.google.mlkit:face-detection:16.1.7")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
 }
 
 publishing {
@@ -59,7 +62,7 @@ publishing {
         register<MavenPublication>("release") {
             groupId = "ng.facededup"
             artifactId = "facededup"
-            version = "1.2.1"
+            version = "2.0.0-alpha01"
             afterEvaluate { from(components["release"]) }
             pom {
                 name.set("Facededup Android SDK")
