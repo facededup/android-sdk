@@ -168,9 +168,15 @@ class FacededupActivity : AppCompatActivity() {
             runCatching { jpegB64(proxy, rot, mirror) }.getOrNull()?.let { frames.add(LivenessClient.Frame(it, proves)) }
         }
         val present = face != null && count == 1
+        val finishedNow = liveness.isFinished
+        val prog = liveness.overallProgress
+        val dir = if (present && !finishedNow) liveness.directionDeg else null
         runOnUiThread {
             overlay.ringColor = if (count > 1) Color.parseColor("#E24B4A") else primaryColor
-            title.text = if (liveness.isFinished) "Great" else "Step ${liveness.progress + 1} of ${liveness.total}"
+            overlay.progress = prog
+            overlay.directionDeg = dir
+            overlay.success = finishedNow
+            title.text = if (finishedNow) "Great" else "Step ${liveness.progress + 1} of ${liveness.total}"
             hint.text = when {
                 count > 1 -> "Only one face, please"
                 else -> liveness.hint(present)

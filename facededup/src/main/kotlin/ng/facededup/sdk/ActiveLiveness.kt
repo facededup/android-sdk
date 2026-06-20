@@ -42,6 +42,11 @@ internal class ActiveLiveness(actions: List<String>) {
     private var index = 0
     private var sawNeutral = false   // require a frontal baseline before counting a turn
 
+    /** 0..1 toward the CURRENT directive — drives the live arc fill. */
+    var subProgress = 0f; private set
+    /** Arc-highlight angle for a directional cue (left = 180°, right = 0°), or null. */
+    var directionDeg: Float? = null; private set
+
     val isFinished: Boolean get() = index >= steps.size
     val current: Directive get() = if (isFinished) Directive.Done else steps[index]
     val total: Int get() = steps.size
@@ -70,15 +75,27 @@ internal class ActiveLiveness(actions: List<String>) {
         // Need a near-frontal baseline before a turn counts (no holding a pose / rushing).
         if (abs(yaw) < NEUTRAL_YAW) sawNeutral = true
 
+        // Live sub-progress + directional cue for the animated arc.
+        when (current) {
+            Directive.TurnLeft  -> { subProgress = (yaw / TURN_YAW).coerceIn(0f, 1f); directionDeg = 180f }
+            Directive.TurnRight -> { subProgress = (-yaw / TURN_YAW).coerceIn(0f, 1f); directionDeg = 0f }
+            Directive.Smile     -> { subProgress = (smile / SMILE).coerceIn(0f, 1f); directionDeg = null }
+            else -> { subProgress = 0f; directionDeg = null }
+        }
+
         val satisfied = when (current) {
             Directive.TurnLeft  -> sawNeutral && yaw >  TURN_YAW
             Directive.TurnRight -> sawNeutral && yaw < -TURN_YAW
             Directive.Smile     -> smile > SMILE
             else -> false
         }
-        if (satisfied) { index++; sawNeutral = false }
+        if (satisfied) { index++; sawNeutral = false; subProgress = 0f }
         return satisfied
     }
+
+    /** Overall completion 0..1 across all steps (completed + current sub-progress). */
+    val overallProgress: Float get() =
+        if (total == 0) 0f else ((index + subProgress) / total).coerceIn(0f, 1f)
 
     /** Action keys (in order) for the submit payload's `client_actions`. */
     fun actionKeys(): List<String> = steps.mapNotNull { it.proves }
