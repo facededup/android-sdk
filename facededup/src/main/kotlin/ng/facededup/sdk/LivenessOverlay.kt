@@ -88,18 +88,24 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
         directionDeg?.let { deg -> drawChevron(canvas, deg, col) }
     }
 
+    // Outward-pointing chevron at the oval edge for ANY direction (math angle:
+    // 0=right, 90=up, 180=left, 270=down), nudging toward the target to cue the move.
     private fun drawChevron(canvas: Canvas, deg: Float, color: Int) {
         chevron.color = color
         val rad = Math.toRadians(deg.toDouble())
         val rx = oval.width() / 2f; val ry = oval.height() / 2f
         val cx = oval.centerX(); val cy = oval.centerY()
+        val ux = cos(rad).toFloat(); val uy = -sin(rad).toFloat()        // outward unit (screen y down)
+        val px = -uy; val py = ux                                        // perpendicular
         val nudge = dp(6f) * (0.5f + 0.5f * sin(phase * 2 * Math.PI).toFloat())
-        val ex = cx + (rx + dp(18f) + nudge) * cos(rad).toFloat()
-        val ey = cy - (ry + dp(18f) + nudge) * sin(rad).toFloat()
+        // base point just outside the ellipse edge along the direction
+        val ex = cx + rx * cos(rad).toFloat() + (dp(16f) + nudge) * ux
+        val ey = cy - ry * sin(rad).toFloat() + (dp(16f) + nudge) * uy
         val s = dp(13f)
-        val dir = if (deg >= 90f) -1f else 1f   // left chevron points left, right points right
         val p = Path()
-        p.moveTo(ex - dir * s, ey - s); p.lineTo(ex + dir * s, ey); p.lineTo(ex - dir * s, ey + s)
+        p.moveTo(ex + px * s, ey + py * s)        // one arm
+        p.lineTo(ex + ux * s, ey + uy * s)        // tip (points outward in the move direction)
+        p.lineTo(ex - px * s, ey - py * s)        // other arm
         canvas.drawPath(p, chevron)
     }
 
