@@ -16,7 +16,7 @@ plugins {
 }
 
 group = "ng.facededup"
-version = "1.1.8"
+version = "1.1.9"
 
 android {
     namespace = "ng.facededup.sdk"
@@ -59,7 +59,7 @@ publishing {
         register<MavenPublication>("release") {
             groupId = "ng.facededup"
             artifactId = "facededup"
-            version = "1.1.8"
+            version = "1.1.9"
             afterEvaluate { from(components["release"]) }
             pom {
                 name.set("Facededup Android SDK")

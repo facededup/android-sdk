@@ -73,6 +73,12 @@
            display:grid; place-items:center; margin:10px auto 0; transition:transform .2s ease; }
     .ptop .arrow svg{ width:22px; height:22px; color:#fff; }
     .ptop .arrow.hide{ display:none; }
+    /* DEMONSTRATE the motion: the arrow's inner glyph nudges in the direction the user
+       must move (the container is rotated per-action, so this local "up" nudge points
+       the right way for turn/look up/down). Shows users HOW to do the action. */
+    .ptop .arrow.demo svg{ animation: fdkNudge 1.1s ease-in-out infinite; }
+    @keyframes fdkNudge{ 0%,100%{ transform:translateY(3px); opacity:.55 } 50%{ transform:translateY(-5px); opacity:1 } }
+    @media (prefers-reduced-motion: reduce){ .ptop .arrow.demo svg{ animation:none } }
     .hint{ text-align:center; color:var(--ink); font-size:19px; font-weight:700; margin-top:14px; min-height:24px; }
     /* bottom guide: pulsing dots that keep moving while a check is in progress */
     .guide{ display:flex; justify-content:center; gap:8px; margin-top:14px; min-height:12px; }
@@ -867,8 +873,8 @@
   const DIRMAP = { turn_left:{deg:180,rot:-90}, turn_right:{deg:0,rot:90}, look_up:{deg:-90,rot:0}, look_down:{deg:90,rot:180}, nod:{deg:90,rot:180} };
   function setDir(action) {
     const d = DIRMAP[action]; const a = $("p-arrow");
-    if (d) { a.classList.remove("hide"); a.style.transform = `rotate(${d.rot}deg)`; return d.deg; }
-    a.classList.add("hide"); return null;
+    if (d) { a.classList.remove("hide"); a.classList.add("demo"); a.style.transform = `rotate(${d.rot}deg)`; return d.deg; }
+    a.classList.add("hide"); a.classList.remove("demo"); return null;
   }
   // Haptic feedback when an action lands. Android WebViews support navigator.vibrate
   // (needs the VIBRATE permission); iOS WebKit does NOT, so we also ping the native
