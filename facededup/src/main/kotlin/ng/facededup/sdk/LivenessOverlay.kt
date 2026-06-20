@@ -45,10 +45,26 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
         addUpdateListener { phase = it.animatedValue as Float; invalidate() }
     }
 
+    private val diag = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#111111"); textAlign = Paint.Align.CENTER; textSize = dp(13f)
+    }
+
     var ringColor: Int = GREEN
     var progress: Float = 0f
     var directionDeg: Float? = null
     var success: Boolean = false
+    /** Live signal readout (shown only when diagnostics are enabled). */
+    var diagnostic: String? = null
+
+    /** Developer-configurable ring thickness + colours + scrim. */
+    fun applyConfig(ringWidthDp: Float, ring: Int, success: Int, scrimHex: String?) {
+        val px = dp(ringWidthDp)
+        this.ring.strokeWidth = px * 0.78f; prog.strokeWidth = px; cue.strokeWidth = px; tick.strokeWidth = px
+        defaultRing = ring; successColor = success
+        runCatching { scrimHex?.let { scrim.color = Color.parseColor(it) } }
+    }
+    private var defaultRing = GREEN
+    private var successColor = GREEN
 
     init { setLayerType(LAYER_TYPE_HARDWARE, null) }
     override fun onAttachedToWindow() { super.onAttachedToWindow(); animator.start() }
@@ -67,19 +83,21 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), scrim)
         canvas.drawOval(oval, clear)                   // punch the camera window
 
-        // solid ring (green when the face is well placed; red otherwise)
-        ring.color = if (success) GREEN else ringColor
+        // solid ring (green/configured when the face is well placed; red otherwise)
+        ring.color = if (success) successColor else ringColor
         if (progress < 0.02f && !success) {            // gentle breathe while positioning
             ring.alpha = (160 + 70 * sin(phase * 2 * Math.PI)).toInt().coerceIn(80, 255)
         } else ring.alpha = 255
         canvas.drawOval(oval, ring)
         ring.alpha = 255
 
+        diagnostic?.let { canvas.drawText(it, width / 2f, height - dp(70f), diag) }
+
         if (success) { drawTick(canvas); return }
 
         // progress arc fills from the top as steps complete
         if (progress > 0.02f) {
-            prog.color = GREEN
+            prog.color = successColor
             canvas.drawArc(oval, -90f, 360f * progress.coerceIn(0f, 1f), false, prog)
         }
         // curved directional cue OUTSIDE the oval on the move side
@@ -95,6 +113,7 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
     }
 
     private fun drawTick(canvas: Canvas) {
+        tick.color = successColor
         val cx = oval.centerX(); val cy = oval.centerY() + oval.height() * 0.16f; val s = dp(16f)
         val p = Path()
         p.moveTo(cx - s, cy); p.lineTo(cx - s * 0.2f, cy + s * 0.8f); p.lineTo(cx + s, cy - s * 0.8f)

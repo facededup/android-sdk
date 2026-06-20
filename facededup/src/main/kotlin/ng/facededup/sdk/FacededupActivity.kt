@@ -61,6 +61,8 @@ class FacededupActivity : AppCompatActivity() {
             .build())
 
     private lateinit var liveness: ActiveLiveness
+    private lateinit var cfg: FacededupLivenessConfig
+    private val watchdog = android.os.Handler(android.os.Looper.getMainLooper())
     private var base = ""
     private var license = ""
     private var subject = "user"
@@ -89,9 +91,16 @@ class FacededupActivity : AppCompatActivity() {
         method = params["method"] ?: "face_liveness"
         agentMode = params["agent"] == "1"
         params["color"]?.let { runCatching { primaryColor = Color.parseColor(it) } }
-        liveness = ActiveLiveness(emptyList())   // default sequence (turn L/R + smile)
+        cfg = FacededupLivenessConfig.load(this)           // developer config (assets/facededup_liveness.json)
+        liveness = ActiveLiveness(cfg)
 
         buildUi(params["bg"])
+        overlay.applyConfig(cfg.ringWidthDp, primaryColor,
+            runCatching { cfg.successColor?.let { Color.parseColor(it) } }.getOrNull() ?: LivenessOverlay.GREEN,
+            cfg.scrimColor)
+        runCatching { cfg.ringColor?.let { primaryColor = Color.parseColor(it) } }
+        // Safety net: never hang — submit whatever we have if the whole flow runs long.
+        watchdog.postDelayed({ if (!done && capturing) { capturing = false; submit() } }, cfg.totalTimeoutMs)
         if (base.isEmpty()) { finishWith("{\"type\":\"liveness\",\"outcome\":\"error\",\"error\":\"no_base_url\"}"); return }
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
@@ -149,6 +158,7 @@ class FacededupActivity : AppCompatActivity() {
     private fun cancelFlow() {
         if (done) return
         done = true; capturing = false
+        watchdog.removeCallbacksAndMessages(null)
         setResult(RESULT_CANCELED); finish()   // contract returns null -> host sees cancelled
     }
 
@@ -206,6 +216,7 @@ class FacededupActivity : AppCompatActivity() {
             overlay.progress = prog
             overlay.directionDeg = dir
             overlay.success = finishedNow
+            overlay.diagnostic = if (cfg.showDiagnostics) liveness.debugLine() else null
             hint.text = when {
                 finishedNow -> "Great"
                 count > 1 -> "Only one face, please"
@@ -257,6 +268,7 @@ class FacededupActivity : AppCompatActivity() {
     private fun finishWith(json: String) {
         if (done) return
         done = true; capturing = false
+        watchdog.removeCallbacksAndMessages(null)
         FacededupResultHolder.json = json
         val fallback = if (json.length <= 256 * 1024) json else "{\"type\":\"liveness\"}"
         setResult(RESULT_OK, Intent().putExtra(EXTRA_RESULT, fallback))
@@ -265,6 +277,7 @@ class FacededupActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        runCatching { watchdog.removeCallbacksAndMessages(null) }
         runCatching { movement.stop() }
         runCatching { analysisExec.shutdown() }
         runCatching { detector.close() }

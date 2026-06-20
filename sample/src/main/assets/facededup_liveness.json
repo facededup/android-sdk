@@ -1,0 +1,11 @@
+{
+  "sequenceLength": 3,
+  "turnYawDeg": 18,
+  "tiltPitchDeg": 12,
+  "smileThreshold": 0.5,
+  "blinkThreshold": 0.4,
+  "ringWidthDp": 10,
+  "ringColor": "#1E9C69",
+  "successColor": "#2CC05C",
+  "showDiagnostics": true
+}
