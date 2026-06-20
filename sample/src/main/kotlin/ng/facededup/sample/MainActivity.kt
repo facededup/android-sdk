@@ -10,6 +10,7 @@ import androidx.appcompat.app.AppCompatActivity
 import ng.facededup.sdk.FacededupConfig
 import ng.facededup.sdk.FacededupContract
 import ng.facededup.sdk.FacededupResult
+import ng.facededup.sdk.FacededupTheme
 
 class MainActivity : AppCompatActivity() {
 
@@ -29,7 +30,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val title = TextView(this).apply {
-            text = "Facededup Demo 1.1.9"
+            text = "Facededup Demo 1.2.0"
             textSize = 22f
             gravity = Gravity.CENTER
         }
@@ -47,10 +48,13 @@ class MainActivity : AppCompatActivity() {
                         baseUrl = "https://facededup.ai",
                         licenseKey = "fdk_40cT6S_lWEpiCjd22ls8bLsL_YQnZNzq",
                         subjectId = "demo-user-1",
-                        // Mirror the branded integration being field-tested (green accent,
-                        // black background) so this demo matches it apples-to-apples.
-                        primaryColor = "#1E9C69",
-                        backgroundColor = "#000000",
+                        // Grouped, typed branding via the new FacededupTheme API.
+                        theme = FacededupTheme(
+                            primaryColor = "#1E9C69",
+                            backgroundColor = "#000000",
+                            textColor = "#FFFFFF",
+                            productName = "Facededup",
+                        ),
                     )
                 )
             }

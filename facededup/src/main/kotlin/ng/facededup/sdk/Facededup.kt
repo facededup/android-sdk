@@ -53,31 +53,61 @@ data class FacededupConfig(
     /** Show the in-flow back button. Defaults to **false** — the SDK has no menu
      *  to return to. Set true if you embed it inside your own navigation. */
     val showBack: Boolean? = false,
-    /** Branding / theme: product name and brand/accent colour (hex, e.g. "#0a3d62"). */
+    /** Branding / theme. Prefer the grouped [theme] below; these flat fields remain for
+     *  back-compat and are used only when [theme] is null. */
     val productName: String? = null,
     val primaryColor: String? = null,
-    /** Theme: UI / font scale (e.g. 1.15 = 15% larger). 1.0 = default. */
     val fontScale: Double? = null,
-    /** Theme: body text colour (hex). */
     val textColor: String? = null,
-    /** Theme: background colour (hex). */
     val backgroundColor: String? = null,
+    /** Grouped, typed branding/theme. Takes precedence over the flat fields above. */
+    val theme: FacededupTheme? = null,
 ) {
     /** Launch options → URL query the web flow reads (`_urlConfig` in the demo). */
     internal fun toQuery(): String {
+        // theme (if supplied) wins over the legacy flat fields.
+        val product = theme?.productName ?: productName
+        val color   = theme?.primaryColor ?: primaryColor
+        val fScale  = theme?.fontScale ?: fontScale
+        val text    = theme?.textColor ?: textColor
+        val bg       = theme?.backgroundColor ?: backgroundColor
         val p = ArrayList<Pair<String, String>>()
         fun add(k: String, v: String?) { if (!v.isNullOrEmpty()) p.add(k to v) }
         add("flow", flow); add("method", method); add("strictness", strictness)
         agentMode?.let { p.add("agent" to if (it) "1" else "0") }
         showSettings?.let { p.add("settings" to if (it) "1" else "0") }
         showBack?.let { p.add("back" to if (it) "1" else "0") }
-        add("product", productName); add("color", primaryColor)
-        fontScale?.let { add("fontScale", it.toString()) }
-        add("textColor", textColor); add("bg", backgroundColor)
+        add("product", product); add("color", color)
+        fScale?.let { add("fontScale", it.toString()) }
+        add("textColor", text); add("bg", bg)
         add("license", licenseKey)
         return p.joinToString("&") { (k, v) -> "$k=" + android.net.Uri.encode(v) }
     }
 }
+
+/**
+ * Branding/theme for the verification UI — group your look-and-feel in one typed object:
+ *
+ * ```kotlin
+ * FacededupConfig(
+ *   baseUrl = "https://facededup.ai", licenseKey = "fdk_…",
+ *   theme = FacededupTheme(primaryColor = "#1E9C69", backgroundColor = "#000000",
+ *                          textColor = "#FFFFFF", productName = "Acme"))
+ * ```
+ * All fields optional; hex colours like `#1E9C69`. `fontScale` 1.0 = default (1.15 = +15%).
+ */
+data class FacededupTheme(
+    /** Brand / accent colour (buttons, progress) — hex, e.g. "#1E9C69". */
+    val primaryColor: String? = null,
+    /** Background colour — hex. */
+    val backgroundColor: String? = null,
+    /** Body text colour — hex. */
+    val textColor: String? = null,
+    /** UI / font scale (1.0 = default, 1.15 = 15% larger). */
+    val fontScale: Double? = null,
+    /** Product name shown in the flow's branding. */
+    val productName: String? = null,
+)
 
 /** One image in the downstream face-compare / liveness contract. */
 data class FacededupImage(
