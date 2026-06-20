@@ -47,7 +47,8 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
     }
 
     private val cardRect = RectF()
-    private var ccx = 0f; private var ccy = 0f; private var rad = 0f
+    private val ovalRect = RectF()
+    private var ccx = 0f; private var ccy = 0f
     private var cardCorner = dp(28f)
 
     var ringColor: Int = GREEN                 // kept for API compat
@@ -58,6 +59,8 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
     var success: Boolean = false
     var wrong: Boolean = false
     var diagnostic: String? = null
+    /** Invoked after geometry is computed in onSizeChanged — host uses it to place views. */
+    var onLaidOut: (() -> Unit)? = null
 
     // A low-frequency animator only keeps invalidating so shownAction eases smoothly.
     private val animator = ValueAnimator.ofFloat(0f, 1f).apply {
@@ -81,17 +84,19 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
     // Geometry anchors the host uses to place the instruction + status views.
     fun cardTopPx(): Float = cardRect.top
     fun cardBottomPx(): Float = cardRect.bottom
-    fun circleTopPx(): Float = ccy - rad
-    // legacy accessors (kept so existing callers compile)
-    fun ovalBottomPx(): Float = cardRect.bottom
-    fun ovalTopPx(): Float = cardRect.top
+    fun ovalBottomPx(): Float = ovalRect.bottom
+    fun ovalTopPx(): Float = ovalRect.top
 
     override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
-        rad = w * 0.27f
+        val ovw = w * 0.52f
+        val ovh = ovw * 1.34f                       // tall oval (not a circle)
         ccx = w / 2f
-        ccy = h * 0.46f
+        ccy = h * 0.44f
+        ovalRect.set(ccx - ovw / 2, ccy - ovh / 2, ccx + ovw / 2, ccy + ovh / 2)
         val m = w * 0.06f
-        cardRect.set(m, ccy - rad - dp(140f), w - m, ccy + rad + dp(44f))
+        // card wraps the oval: room for the arrow above + the instruction below.
+        cardRect.set(m, ovalRect.top - dp(64f), w - m, ovalRect.bottom + dp(96f))
+        post { onLaidOut?.invoke() }
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -101,9 +106,10 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
 
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), dim)    // dim the camera bg
         canvas.drawRoundRect(cardRect, cardCorner, cardCorner, card)       // white card
-        canvas.drawCircle(ccx, ccy, rad, clear)                           // punch camera window
+        canvas.drawOval(ovalRect, clear)                                  // punch oval camera window
 
-        val arcRect = RectF(ccx - rad - dp(7f), ccy - rad - dp(7f), ccx + rad + dp(7f), ccy + rad + dp(7f))
+        val g = dp(7f)
+        val arcRect = RectF(ovalRect.left - g, ovalRect.top - g, ovalRect.right + g, ovalRect.bottom + g)
 
         if (success) {
             // full green ring + tick
@@ -125,7 +131,7 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
     }
 
     private fun drawArrow(canvas: Canvas, deg: Float) {
-        val ax = ccx; val ay = ccy - rad - dp(40f); val r = dp(15f)
+        val ax = ccx; val ay = ovalRect.top - dp(34f); val r = dp(15f)
         canvas.drawCircle(ax, ay, r, arrowBg)
         // a right-pointing chevron, rotated to the direction (screen angle = -deg)
         canvas.save()
@@ -139,7 +145,7 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
 
     private fun drawTick(canvas: Canvas) {
         tick.color = successColor
-        val cx = ccx; val cy = ccy + rad * 0.10f; val s = dp(15f)
+        val cx = ccx; val cy = ccy + ovalRect.height() * 0.07f; val s = dp(15f)
         val p = Path()
         p.moveTo(cx - s, cy); p.lineTo(cx - s * 0.2f, cy + s * 0.8f); p.lineTo(cx + s, cy - s * 0.8f)
         canvas.drawPath(p, tick)

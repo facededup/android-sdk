@@ -54,7 +54,7 @@ data class FacededupLivenessConfig(
     val strings: Map<String, String> = emptyMap(),
 ) {
     private val defaults = mapOf(
-        "center_face" to "Center your face in the frame",
+        "center_face" to "Center your face in the oval",
         "turn_left" to "Turn your head left", "turn_right" to "Turn your head right",
         "look_up" to "Tilt your head up", "look_down" to "Tilt your head down",
         "smile" to "Smile", "blink" to "Blink your eyes", "hold_still" to "Hold still",

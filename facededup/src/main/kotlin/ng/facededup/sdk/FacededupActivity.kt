@@ -188,10 +188,10 @@ class FacededupActivity : AppCompatActivity() {
             root.addView(cancel)
         }
         setContentView(root)
-        // Once laid out, anchor the instruction near the top of the card.
-        overlay.post {
+        // Anchor the instruction just BELOW the oval (inside the card) once geometry is known.
+        overlay.onLaidOut = {
             (hint.layoutParams as FrameLayout.LayoutParams).let {
-                it.topMargin = (overlay.cardTopPx() + dp(26)).toInt(); hint.layoutParams = it
+                it.topMargin = (overlay.ovalBottomPx() + dp(28)).toInt(); hint.layoutParams = it
             }
         }
     }
