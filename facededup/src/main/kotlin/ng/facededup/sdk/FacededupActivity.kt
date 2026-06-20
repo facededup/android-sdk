@@ -225,13 +225,16 @@ class FacededupActivity : AppCompatActivity() {
         val satisfied = liveness.onFace(if (count == 1) face else null)   // require exactly one face
         if (satisfied) {
             runCatching { jpegB64(proxy, rot, mirror) }.getOrNull()?.let { frames.add(LivenessClient.Frame(it, proves)) }
+            vibrate(40)   // SHAP — haptic confirm on each completed action
         }
         val present = face != null && count == 1
         val finishedNow = liveness.isFinished
+        val wrong = present && !finishedNow && liveness.wrong
         val prog = liveness.overallProgress
         val dir = if (present && !finishedNow) liveness.directionDeg else null
         runOnUiThread {
-            overlay.ringColor = if (count > 1) Color.parseColor("#E24B4A") else primaryColor
+            overlay.ringColor = if (count > 1 || wrong) Color.parseColor("#E24B4A") else primaryColor
+            overlay.wrong = wrong
             overlay.progress = prog
             overlay.directionDeg = dir
             overlay.success = finishedNow
@@ -239,10 +242,40 @@ class FacededupActivity : AppCompatActivity() {
             hint.text = when {
                 finishedNow -> cfg.str("great")
                 count > 1 -> cfg.str("only_one_face")
+                wrong -> wrongHint()
                 else -> liveness.hint(present)
             }
         }
-        if (liveness.isFinished && capturing) { capturing = false; runOnUiThread { submit() } }
+        if (liveness.isFinished && capturing) {
+            capturing = false; vibrate(0)   // success buzz (double pattern)
+            runOnUiThread { submit() }
+        }
+    }
+
+    // Corrective nudge when the user moves the opposite way from what's asked.
+    private fun wrongHint(): String = when (liveness.current) {
+        ActiveLiveness.Directive.TurnLeft  -> "↩ The other way — turn LEFT"
+        ActiveLiveness.Directive.TurnRight -> "↪ The other way — turn RIGHT"
+        ActiveLiveness.Directive.LookUp    -> "↑ Tilt UP, not down"
+        ActiveLiveness.Directive.LookDown  -> "↓ Tilt DOWN, not up"
+        else -> liveness.hint(true)
+    }
+
+    private val vibrator by lazy {
+        if (android.os.Build.VERSION.SDK_INT >= 31)
+            (getSystemService(android.os.VibratorManager::class.java))?.defaultVibrator
+        else @Suppress("DEPRECATION") (getSystemService(VIBRATOR_SERVICE) as? android.os.Vibrator)
+    }
+    /** SHAP: ms>0 = single tick (action done); ms==0 = success double-buzz. */
+    private fun vibrate(ms: Long) {
+        val v = vibrator ?: return
+        runCatching {
+            if (android.os.Build.VERSION.SDK_INT >= 26) {
+                val effect = if (ms > 0) android.os.VibrationEffect.createOneShot(ms, android.os.VibrationEffect.DEFAULT_AMPLITUDE)
+                             else android.os.VibrationEffect.createWaveform(longArrayOf(0, 35, 60, 35), -1)
+                v.vibrate(effect)
+            } else @Suppress("DEPRECATION") v.vibrate(if (ms > 0) ms else 90L)
+        }
     }
 
     private fun submit() {

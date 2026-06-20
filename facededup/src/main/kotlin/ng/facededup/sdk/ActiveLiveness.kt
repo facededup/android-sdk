@@ -60,7 +60,16 @@ internal class ActiveLiveness(private val cfg: FacededupLivenessConfig) {
     private var index = 0
     private var sawNeutral = false      // yaw returned near-frontal (for turns/tilts)
     private var sawEyesOpen = false
-    private var neutralPitch: Float? = null   // EMA resting pitch (phone-bias baseline)
+    private var neutralPitch: Float? = null   // resting pitch (phone-bias baseline)
+
+    // Positioning phase: hold a stable, frontal face FIRST to capture the resting pose
+    // (seeds neutralPitch) before any action — fixes "look up/down never registers"
+    // when a vertical action is first (dPitch was stuck at 0).
+    private var positioned = false
+    private var posStable = 0
+    private var posPitchSum = 0f
+    private var posPitchN = 0
+    private val posNeeded = 12          // ~stable frames frontal before starting
 
     // live values (for the diagnostic overlay)
     var dbgYaw = 0f; private set
@@ -70,18 +79,25 @@ internal class ActiveLiveness(private val cfg: FacededupLivenessConfig) {
 
     var subProgress = 0f; private set
     var directionDeg: Float? = null; private set
+    /** True when the user is clearly doing the OPPOSITE of the asked move (→ red + nudge). */
+    var wrong = false; private set
 
-    val isFinished: Boolean get() = index >= steps.size
-    val current: Directive get() = if (isFinished) Directive.Done else steps[index]
+    val isFinished: Boolean get() = positioned && index >= steps.size
+    val current: Directive get() = when {
+        !positioned -> Directive.Positioning
+        index >= steps.size -> Directive.Done
+        else -> steps[index]
+    }
     val total: Int get() = steps.size
     val progress: Int get() = index
     fun actionKeys(): List<String> = steps.mapNotNull { it.proves }
     val overallProgress: Float get() =
-        if (total == 0) 0f else ((index + subProgress) / total).coerceIn(0f, 1f)
+        if (!positioned || total == 0) 0f else ((index + subProgress) / total).coerceIn(0f, 1f)
 
     fun hint(facePresent: Boolean): String = when {
         !facePresent -> cfg.str("center_face")
         else -> when (current) {
+            Directive.Positioning -> cfg.str("center_face")
             Directive.TurnLeft -> cfg.str("turn_left")
             Directive.TurnRight -> cfg.str("turn_right")
             Directive.LookUp -> cfg.str("look_up")
@@ -98,14 +114,27 @@ internal class ActiveLiveness(private val cfg: FacededupLivenessConfig) {
         val pitch = face.headEulerAngleX * PITCH_SIGN
         val smile = face.smilingProbability ?: 0f
         val eyeOpen = minOf(face.leftEyeOpenProbability ?: 1f, face.rightEyeOpenProbability ?: 1f)
-
         val frontal = abs(yaw) < cfg.neutralYawDeg
+
+        // ---- POSITIONING: capture resting pose, then start ----
+        if (!positioned) {
+            wrong = false; directionDeg = null
+            dbgYaw = yaw; dbgPitchDelta = 0f; dbgSmile = smile; dbgEyeOpen = eyeOpen
+            if (frontal) { posStable++; posPitchSum += pitch; posPitchN++ } else posStable = 0
+            subProgress = (posStable.toFloat() / posNeeded).coerceIn(0f, 1f)
+            if (posStable >= posNeeded) {
+                neutralPitch = if (posPitchN > 0) posPitchSum / posPitchN else pitch
+                positioned = true; subProgress = 0f
+            }
+            return false
+        }
+
         if (frontal) sawNeutral = true
         if (eyeOpen > EYE_OPEN) sawEyesOpen = true
-        // Track resting pitch as an EMA when frontal and NOT mid up/down action.
+        // keep refining the resting pitch when frontal and NOT mid up/down action
         val vertical = current == Directive.LookUp || current == Directive.LookDown
         if (frontal && !vertical) {
-            neutralPitch = if (neutralPitch == null) pitch else neutralPitch!! + (pitch - neutralPitch!!) * 0.1f
+            neutralPitch = neutralPitch!! + (pitch - neutralPitch!!) * 0.08f
         }
         val pitchDelta = pitch - (neutralPitch ?: pitch)
 
@@ -121,6 +150,15 @@ internal class ActiveLiveness(private val cfg: FacededupLivenessConfig) {
             else -> { subProgress = 0f; directionDeg = null }
         }
 
+        // moving clearly the WRONG way → flag for a red ring + corrective nudge
+        wrong = when (current) {
+            Directive.TurnLeft  -> yaw < -6f
+            Directive.TurnRight -> yaw >  6f
+            Directive.LookUp    -> pitchDelta < -6f
+            Directive.LookDown  -> pitchDelta >  6f
+            else -> false
+        }
+
         val satisfied = when (current) {
             Directive.TurnLeft  -> sawNeutral && yaw >  cfg.turnYawDeg
             Directive.TurnRight -> sawNeutral && yaw < -cfg.turnYawDeg
@@ -130,7 +168,7 @@ internal class ActiveLiveness(private val cfg: FacededupLivenessConfig) {
             Directive.Blink     -> sawEyesOpen && eyeOpen < cfg.blinkThreshold
             else -> false
         }
-        if (satisfied) { index++; sawNeutral = false; sawEyesOpen = false; subProgress = 0f }
+        if (satisfied) { index++; sawNeutral = false; sawEyesOpen = false; subProgress = 0f; wrong = false }
         return satisfied
     }
 

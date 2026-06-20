@@ -49,10 +49,14 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
         color = Color.parseColor("#111111"); textAlign = Paint.Align.CENTER; textSize = dp(13f)
     }
 
+    private val glow = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND }
+
     var ringColor: Int = GREEN
-    var progress: Float = 0f
+    var progress: Float = 0f                 // target; the ring eases toward it (smooth)
+    private var shownProgress: Float = 0f
     var directionDeg: Float? = null
     var success: Boolean = false
+    var wrong: Boolean = false
     /** Live signal readout (shown only when diagnostics are enabled). */
     var diagnostic: String? = null
 
@@ -80,25 +84,31 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
     }
 
     override fun onDraw(canvas: Canvas) {
+        shownProgress += (progress - shownProgress) * 0.25f      // ease toward target (smooth)
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), scrim)
         canvas.drawOval(oval, clear)                   // punch the camera window
 
-        // solid ring (green/configured when the face is well placed; red otherwise)
-        ring.color = if (success) successColor else ringColor
-        if (progress < 0.02f && !success) {            // gentle breathe while positioning
-            ring.alpha = (160 + 70 * sin(phase * 2 * Math.PI)).toInt().coerceIn(80, 255)
-        } else ring.alpha = 255
-        canvas.drawOval(oval, ring)
-        ring.alpha = 255
+        val col = if (success) successColor else ringColor
+        // soft glow halo around the oval (pulses gently)
+        glow.color = col
+        glow.strokeWidth = ring.strokeWidth + dp(10f)
+        glow.alpha = (40 + 30 * (0.5 + 0.5 * sin(phase * 2 * Math.PI))).toInt().coerceIn(20, 90)
+        canvas.drawOval(oval, glow); glow.alpha = 255
+
+        // solid ring (green when placed/active; red on wrong move; breathes while positioning)
+        ring.color = col
+        ring.alpha = if (shownProgress < 0.02f && !success)
+            (170 + 70 * sin(phase * 2 * Math.PI)).toInt().coerceIn(90, 255) else 255
+        canvas.drawOval(oval, ring); ring.alpha = 255
 
         diagnostic?.let { canvas.drawText(it, width / 2f, height - dp(70f), diag) }
 
         if (success) { drawTick(canvas); return }
 
-        // progress arc fills from the top as steps complete
-        if (progress > 0.02f) {
-            prog.color = successColor
-            canvas.drawArc(oval, -90f, 360f * progress.coerceIn(0f, 1f), false, prog)
+        // progress arc fills (eased) from the top as the action completes
+        if (shownProgress > 0.02f) {
+            prog.color = if (wrong) col else successColor
+            canvas.drawArc(oval, -90f, 360f * shownProgress.coerceIn(0f, 1f), false, prog)
         }
         // curved directional cue OUTSIDE the oval on the move side
         directionDeg?.let { drawCue(canvas, it) }
