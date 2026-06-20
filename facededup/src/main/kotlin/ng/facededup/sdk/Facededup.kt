@@ -33,6 +33,10 @@ data class FacededupConfig(
     /** Per-tenant license key (fdk_…) — production replacement for the demo password. */
     val licenseKey: String? = null,
     val subjectId: String? = null,
+    /** Consent-capture record id (opaque to us). REQUIRED for encrypted liveness-event
+     *  ingest — when set (and an ingest key is configured at build time), the SDK seals
+     *  and posts a liveness event after the flow. Null → ingest is skipped. */
+    val consentId: String? = null,
     /** GCP project number for Play Integrity device attestation (Annex A3e).
      *  When set, the flow mints a hardware attestation token bound to the
      *  challenge nonce. Null -> no attestation token is sent. */
@@ -81,6 +85,7 @@ data class FacededupConfig(
         fScale?.let { add("fontScale", it.toString()) }
         add("textColor", text); add("bg", bg)
         add("license", licenseKey)
+        add("consent", consentId)
         return p.joinToString("&") { (k, v) -> "$k=" + android.net.Uri.encode(v) }
     }
 }

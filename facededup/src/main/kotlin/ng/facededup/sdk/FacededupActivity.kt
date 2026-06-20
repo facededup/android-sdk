@@ -55,6 +55,7 @@ class FacededupActivity : AppCompatActivity() {
     private lateinit var title: TextView
     private lateinit var hint: TextView
     private var shotView: ImageView? = null      // frozen last frame shown while deciding
+    private var toast: TextView? = null          // bottom status pill (verifying / submitted / offline)
 
     private val analysisExec = Executors.newSingleThreadExecutor()
     private val detector = FaceDetection.getClient(
@@ -70,6 +71,7 @@ class FacededupActivity : AppCompatActivity() {
     private var license = ""
     private var subject = "user"
     private var method = "face_liveness"
+    private var consentId: String? = null
     private var agentMode = false
     private var primaryColor = Color.parseColor("#1E9C69")
 
@@ -96,6 +98,7 @@ class FacededupActivity : AppCompatActivity() {
         license = params["license"] ?: ""
         subject = intent.getStringExtra(EXTRA_SUBJECT) ?: params["subject"] ?: "user"
         method = params["method"] ?: "face_liveness"
+        consentId = params["consent"]?.ifEmpty { null }
         agentMode = params["agent"] == "1"
         params["color"]?.let { runCatching { primaryColor = Color.parseColor(it) } }
         cfg = FacededupLivenessConfig.load(this)           // developer config (assets/facededup_liveness.json)
@@ -117,14 +120,14 @@ class FacededupActivity : AppCompatActivity() {
 
     private fun buildUi(bgHex: String?) {
         val root = FrameLayout(this)
-        // Light background (host reads as a clean white screen). Theme bg overrides.
-        root.setBackgroundColor(runCatching { bgHex?.let { Color.parseColor(it) } }.getOrNull() ?: Color.WHITE)
+        // Dark behind the live camera (camera fills the screen; the overlay dims it).
+        root.setBackgroundColor(runCatching { bgHex?.let { Color.parseColor(it) } }.getOrNull() ?: Color.parseColor("#0E0F12"))
         previewView = PreviewView(this).apply {
             layoutParams = FrameLayout.LayoutParams(MATCH, MATCH)
             scaleType = PreviewView.ScaleType.FILL_CENTER
         }
-        // Frozen-frame layer: sits ON TOP of the live preview but UNDER the overlay, so when
-        // we stop the camera to decide, the user still sees their last shot inside the oval.
+        // Frozen-frame layer: ON TOP of the live preview, UNDER the overlay — when we stop
+        // the camera to decide, the user still sees their last shot inside the circle.
         shotView = ImageView(this).apply {
             layoutParams = FrameLayout.LayoutParams(MATCH, MATCH)
             scaleType = ImageView.ScaleType.CENTER_CROP
@@ -133,52 +136,62 @@ class FacededupActivity : AppCompatActivity() {
         overlay = LivenessOverlay(this).apply {
             layoutParams = FrameLayout.LayoutParams(MATCH, MATCH); ringColor = primaryColor
         }
-        // Instruction on a rounded pill, placed just BELOW the oval (colours configurable).
-        val pillBg = parseColorOr(cfg.pillColor, Color.parseColor("#D92D2B2A"))
-        val pillText = parseColorOr(cfg.pillTextColor, Color.WHITE)
+        // TOP instruction — bold dark text on the white card (no pill).
         hint = TextView(this).apply {
-            text = cfg.str("center_face"); textSize = 17f; setTextColor(pillText)
-            gravity = Gravity.CENTER; setTypeface(typeface, android.graphics.Typeface.BOLD)
-            background = GradientDrawable().apply { setColor(pillBg); cornerRadius = dpf(24f) }
-            setPadding(dp(22), dp(12), dp(22), dp(12))
-            layoutParams = FrameLayout.LayoutParams(WRAP, WRAP).apply {
+            text = cfg.str("center_face"); textSize = 21f
+            setTextColor(parseColorOr(cfg.pillTextColor, Color.parseColor("#1F2024")))
+            gravity = Gravity.CENTER; maxLines = 2
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setPadding(dp(28), 0, dp(28), 0)
+            layoutParams = FrameLayout.LayoutParams(MATCH, WRAP).apply {
                 gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
             }
         }
-        title = hint   // single instruction line drives the pill
+        title = hint
+        // BOTTOM status toast — a white rounded pill (verifying / submitted / offline). Hidden until needed.
+        toast = TextView(this).apply {
+            textSize = 16f; setTextColor(Color.parseColor("#1F2024"))
+            gravity = Gravity.CENTER; maxLines = 3
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            background = GradientDrawable().apply { setColor(Color.WHITE); cornerRadius = dpf(20f) }
+            setPadding(dp(24), dp(16), dp(24), dp(16))
+            elevation = dpf(8f); visibility = android.view.View.GONE
+            layoutParams = FrameLayout.LayoutParams(WRAP, WRAP).apply {
+                gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL; bottomMargin = dp(64)
+            }
+        }
         root.addView(previewView); shotView?.let { root.addView(it) }; root.addView(overlay)
-        // Optional brand logo at the top (from app assets).
         cfg.logoAsset?.let { path ->
             runCatching {
                 val bmp = android.graphics.BitmapFactory.decodeStream(assets.open(path))
-                val iv = android.widget.ImageView(this).apply {
+                val iv = ImageView(this).apply {
                     setImageBitmap(bmp); adjustViewBounds = true
-                    layoutParams = FrameLayout.LayoutParams(WRAP, dp(40)).apply {
-                        gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL; topMargin = dp(40)
+                    layoutParams = FrameLayout.LayoutParams(WRAP, dp(34)).apply {
+                        gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL; topMargin = dp(28)
                     }
                 }
                 root.addView(iv)
             }
         }
-        root.addView(hint)
+        root.addView(hint); toast?.let { root.addView(it) }
         if (cfg.showCancel) {
             val cancel = TextView(this).apply {
-                text = cfg.str("cancel"); textSize = 16f
-                setTextColor(parseColorOr(cfg.cancelColor, Color.parseColor("#5F5E5A")))
+                text = cfg.str("cancel"); textSize = 15f
+                setTextColor(parseColorOr(cfg.cancelColor, Color.parseColor("#FFFFFF")))
                 gravity = Gravity.CENTER; setTypeface(typeface, android.graphics.Typeface.BOLD)
-                setPadding(dp(24), dp(14), dp(24), dp(14))
+                setPadding(dp(24), dp(10), dp(24), dp(10))
                 setOnClickListener { cancelFlow() }
                 layoutParams = FrameLayout.LayoutParams(MATCH, WRAP).apply {
-                    gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL; bottomMargin = dp(36)
+                    gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL; bottomMargin = dp(20)
                 }
             }
             root.addView(cancel)
         }
         setContentView(root)
-        // Once laid out, drop the instruction pill just under the oval.
+        // Once laid out, anchor the instruction near the top of the card.
         overlay.post {
             (hint.layoutParams as FrameLayout.LayoutParams).let {
-                it.topMargin = (overlay.ovalBottomPx() + dp(28)).toInt(); hint.layoutParams = it
+                it.topMargin = (overlay.cardTopPx() + dp(26)).toInt(); hint.layoutParams = it
             }
         }
     }
@@ -279,12 +292,12 @@ class FacededupActivity : AppCompatActivity() {
             tooClose -> cfg.str("move_back")
             else -> null
         } else null
-        val prog = liveness.overallProgress
-        val dir = if (present && !finishedNow) liveness.directionDeg else null
+        val act = if (present && !finishedNow && !positioning) liveness.subProgress else 0f
+        val dir = if (present && !finishedNow && !positioning) liveness.directionDeg else null
         runOnUiThread {
+            overlay.present = present
             overlay.wrong = wrong
-            overlay.progress = prog
-            overlay.segments = liveness.total            // one ring segment per challenge
+            overlay.actionProgress = act                  // current action drives the single arc
             overlay.directionDeg = dir
             overlay.success = finishedNow
             overlay.diagnostic = if (cfg.showDiagnostics) liveness.debugLine() else null
@@ -358,11 +371,14 @@ class FacededupActivity : AppCompatActivity() {
         lastBitmap?.let { bmp ->
             shotView?.apply { setImageBitmap(bmp); visibility = android.view.View.VISIBLE }
         }
-        overlay.success = true; overlay.directionDeg = null; overlay.wrong = false
-        // Friendly waiting copy — and if we're offline, set expectations honestly.
+        overlay.success = true; overlay.present = true; overlay.directionDeg = null; overlay.wrong = false
+        hint.text = cfg.str("great")
+        // Friendly status in the bottom toast — honest if we're offline.
         val online = LivenessClient.isOnline(applicationContext)
-        hint.text = if (online) cfg.str("verifying") else cfg.str("offline_saved")
-        if (!online) hint.maxLines = 4
+        toast?.apply {
+            text = if (online) cfg.str("verifying") else cfg.str("offline_saved")
+            visibility = android.view.View.VISIBLE
+        }
         val durationMs = if (captureStartMs > 0) System.currentTimeMillis() - captureStartMs else 0L
         val all = ArrayList<LivenessClient.Frame>()
         portrait?.let { all.add(LivenessClient.Frame(it, null)) }
@@ -376,8 +392,28 @@ class FacededupActivity : AppCompatActivity() {
             }.getOrNull()
             val json = LivenessClient.submit(applicationContext, base, license, subject,
                 method, liveness.actionKeys(), all, metadata)
+            // Encrypted liveness-event ingest (best-effort, detached). Fired BEFORE we
+            // hand the result back; failure here never blocks the host's result.
+            ingestEvent(json, metadata, durationMs)
             runOnUiThread { finishWith(json) }
         }.start()
+    }
+
+    /** Seal + post an encrypted liveness event (no-op unless consentId + ingest key set). */
+    private fun ingestEvent(verdictJson: String, metadata: Map<String, Any?>?, durationMs: Long) {
+        val consent = consentId ?: return                       // host didn't supply consent → skip
+        runCatching {
+            val body = ng.facededup.sdk.ingest.IngestEventBuilder.fromNative(
+                consentId = consent,
+                requestId = "req_" + java.util.UUID.randomUUID().toString().replace("-", ""),
+                method = method,
+                verdictJson = verdictJson,
+                metadata = metadata,
+                subjectRef = subject.takeIf { it != "user" },
+                totalLatencyMs = durationMs.toInt().takeIf { it > 0 },
+            )
+            ng.facededup.sdk.ingest.IngestClient(applicationContext).fireAndForget(body)
+        }
     }
 
     private fun isFrontal(f: Face) = abs(f.headEulerAngleY) < 10f && abs(f.headEulerAngleX) < 12f

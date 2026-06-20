@@ -1,3 +1,5 @@
+import java.util.Properties
+
 // Facededup drop-in SDK: launches the hosted verification flow in a WebView and
 // returns a typed result via ActivityResult. Android framework + org.json only.
 //
@@ -17,7 +19,7 @@ plugins {
 }
 
 group = "ng.facededup"
-version = "2.0.0-alpha11"
+version = "2.0.0-alpha12"
 
 // ── Encrypted-ingest config (NEVER hard-code the secret) ──────────────────────
 // Base URL + ingest secret are read at BUILD TIME from (in precedence order):
@@ -25,9 +27,9 @@ version = "2.0.0-alpha11"
 //   2. local.properties   (facededup.ingestKey=… — this file is .gitignored)
 //   3. an environment var (FACEDEDUP_INGEST_KEY — CI secret manager)
 // Default for the key is EMPTY, so nothing secret ever lands in source/VCS.
-val localProps = java.util.Properties().apply {
-    val f = rootProject.file("local.properties")
-    if (f.exists()) f.inputStream().use { load(it) }
+val localProps = Properties()
+rootProject.file("local.properties").let { f ->
+    if (f.exists()) f.inputStream().use { localProps.load(it) }
 }
 fun ingestProp(gradleKey: String, propKey: String, envKey: String, default: String = ""): String =
     (project.findProperty(gradleKey) as String?)
@@ -100,7 +102,7 @@ publishing {
         register<MavenPublication>("release") {
             groupId = "ng.facededup"
             artifactId = "facededup"
-            version = "2.0.0-alpha11"
+            version = "2.0.0-alpha12"
             afterEvaluate { from(components["release"]) }
             pom {
                 name.set("Facededup Android SDK")

@@ -13,58 +13,64 @@ import android.view.View
 import android.view.animation.LinearInterpolator
 
 /**
- * Clean, banking-grade liveness overlay: an opaque white surround with a tall oval
- * cut-out (only the capture area shows the camera), and a SINGLE neutral ring split
- * into one segment per challenge. As each challenge passes, its segment animates
- * smoothly to green — no glow halos, no pulsing, no stacked rings. Calm by design.
+ * Card-style liveness overlay (banking-grade, original implementation):
+ *
+ *   • a subtly dimmed live-camera background,
+ *   • a floating white rounded CARD,
+ *   • a CIRCULAR window punched in the card (the camera shows through),
+ *   • a small directional ARROW above the circle, and
+ *   • a SINGLE green progress ARC on the side the user must turn toward, growing
+ *     smoothly with the current action (no full ring, no glow, no pulsing).
+ *
+ * The instruction text (top of card) and status toast (below the card) are Views
+ * placed by the host activity using [cardTopPx]/[cardBottomPx].
  */
 internal class LivenessOverlay(ctx: Context) : View(ctx) {
 
-    // Opaque white surround so only the oval (capture area) shows the camera.
-    private val scrim = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+    private val dim = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#22000000") }
+    private val card = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
     private val clear = Paint(Paint.ANTI_ALIAS_FLAG).apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR) }
-    // Neutral base ring (unfilled segments).
-    private val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE; strokeWidth = dp(6f); strokeCap = Paint.Cap.ROUND
+    private val arc = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeWidth = dp(7f); strokeCap = Paint.Cap.ROUND
     }
-    // Green progress fill (completed / filling segments).
-    private val prog = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE; strokeWidth = dp(6f); strokeCap = Paint.Cap.ROUND
+    private val arrowBg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#16181C") }
+    private val arrowFg = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeWidth = dp(2.6f); strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND; color = Color.WHITE
     }
     private val tick = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE; strokeWidth = dp(7f); strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND; color = GREEN
     }
     private val diag = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#111111"); textAlign = Paint.Align.CENTER; textSize = dp(13f)
+        color = Color.parseColor("#FFFFFF"); textAlign = Paint.Align.CENTER; textSize = dp(13f)
     }
 
-    private val oval = RectF()
+    private val cardRect = RectF()
+    private var ccx = 0f; private var ccy = 0f; private var rad = 0f
+    private var cardCorner = dp(28f)
 
-    // A single low-frequency animator drives only the smooth easing of the fill —
-    // it does NOT pulse anything (no breathing/glow), it just keeps invalidating
-    // while shownProgress catches up to the target.
+    var ringColor: Int = GREEN                 // kept for API compat
+    var actionProgress: Float = 0f             // current action 0..1 (drives the arc)
+    private var shownAction: Float = 0f
+    var directionDeg: Float? = null            // 0=right,90=up,180=left,270=down; null = no direction
+    var present: Boolean = false               // a single face is in frame
+    var success: Boolean = false
+    var wrong: Boolean = false
+    var diagnostic: String? = null
+
+    // A low-frequency animator only keeps invalidating so shownAction eases smoothly.
     private val animator = ValueAnimator.ofFloat(0f, 1f).apply {
         duration = 1000; repeatCount = ValueAnimator.INFINITE; interpolator = LinearInterpolator()
         addUpdateListener { invalidate() }
     }
 
-    var ringColor: Int = GREEN            // kept for API compat; not used for the base ring
-    var progress: Float = 0f              // overall progress 0..1 (target; eased)
-    private var shownProgress: Float = 0f
-    var segments: Int = 3                 // one ring segment per challenge
-    var directionDeg: Float? = null       // kept for API compat; cues removed for a calm UI
-    var success: Boolean = false
-    var wrong: Boolean = false
-    /** Live signal readout (shown only when diagnostics are enabled). */
-    var diagnostic: String? = null
-
-    /** Developer-configurable ring thickness + colours + scrim. */
+    /** Arc thickness + success colour + dim/scrim colour (ring param kept for compat). */
     fun applyConfig(ringWidthDp: Float, ring: Int, success: Int, scrimHex: String?) {
         val px = dp(ringWidthDp)
-        this.ring.strokeWidth = px; prog.strokeWidth = px; tick.strokeWidth = px
+        arc.strokeWidth = px; tick.strokeWidth = px
         successColor = success
-        runCatching { scrimHex?.let { scrim.color = Color.parseColor(it) } }
+        runCatching { scrimHex?.let { dim.color = Color.parseColor(it) } }
     }
     private var successColor = GREEN
 
@@ -72,52 +78,68 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
     override fun onAttachedToWindow() { super.onAttachedToWindow(); animator.start() }
     override fun onDetachedFromWindow() { animator.cancel(); super.onDetachedFromWindow() }
 
-    fun ovalBottomPx(): Float = oval.bottom
-    fun ovalTopPx(): Float = oval.top
+    // Geometry anchors the host uses to place the instruction + status views.
+    fun cardTopPx(): Float = cardRect.top
+    fun cardBottomPx(): Float = cardRect.bottom
+    fun circleTopPx(): Float = ccy - rad
+    // legacy accessors (kept so existing callers compile)
+    fun ovalBottomPx(): Float = cardRect.bottom
+    fun ovalTopPx(): Float = cardRect.top
 
     override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
-        val ow2 = w * 0.66f; val oh2 = ow2 * 1.32f
-        val cx = w / 2f; val cy = h * 0.44f
-        oval.set(cx - ow2 / 2, cy - oh2 / 2, cx + ow2 / 2, cy + oh2 / 2)
+        rad = w * 0.27f
+        ccx = w / 2f
+        ccy = h * 0.46f
+        val m = w * 0.06f
+        cardRect.set(m, ccy - rad - dp(140f), w - m, ccy + rad + dp(44f))
     }
 
     override fun onDraw(canvas: Canvas) {
-        // gentle ease toward the target — smooth + elegant, no snapping
-        val target = if (success) 1f else progress
-        shownProgress += (target - shownProgress) * 0.16f
-        if (kotlin.math.abs(target - shownProgress) < 0.002f) shownProgress = target
+        shownAction += ((if (success) 1f else actionProgress) - shownAction) * 0.16f
+        if (kotlin.math.abs((if (success) 1f else actionProgress) - shownAction) < 0.002f)
+            shownAction = if (success) 1f else actionProgress
 
-        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), scrim)
-        canvas.drawOval(oval, clear)                   // punch the camera window
+        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), dim)    // dim the camera bg
+        canvas.drawRoundRect(cardRect, cardCorner, cardCorner, card)       // white card
+        canvas.drawCircle(ccx, ccy, rad, clear)                           // punch camera window
 
-        val total = segments.coerceAtLeast(1)
-        val gapDeg = if (total > 1) 7f else 0f         // small gap between segments
-        val segDeg = 360f / total
-        val fillUnits = shownProgress.coerceIn(0f, 1f) * total
-        val active = fillUnits.toInt().coerceIn(0, total - 1)
+        val arcRect = RectF(ccx - rad - dp(7f), ccy - rad - dp(7f), ccx + rad + dp(7f), ccy + rad + dp(7f))
 
-        for (i in 0 until total) {
-            val start = -90f + i * segDeg + gapDeg / 2f
-            val sweep = segDeg - gapDeg
-            // neutral base — soft red on the ACTIVE segment if the user moves the wrong way
-            ring.color = if (wrong && i == active && !success) WRONG else NEUTRAL
-            canvas.drawArc(oval, start, sweep, false, ring)
-            // green fill for the completed portion of this segment
-            val f = (fillUnits - i).coerceIn(0f, 1f)
-            if (f > 0.001f && !(wrong && i == active)) {
-                prog.color = successColor
-                canvas.drawArc(oval, start, sweep * f, false, prog)
-            }
+        if (success) {
+            // full green ring + tick
+            arc.color = successColor
+            canvas.drawArc(arcRect, 0f, 360f, false, arc)
+            drawTick(canvas)
+        } else if (present) {
+            // single directional arc growing with the current action
+            val a = shownAction.coerceIn(0f, 1f)
+            val screenCenter = -(directionDeg ?: 90f)   // math→screen; null → top
+            val sweep = (24f + 132f * a)                // a calm, growing arc
+            arc.color = if (wrong) WRONG else successColor
+            canvas.drawArc(arcRect, screenCenter - sweep / 2f, sweep, false, arc)
+            // directional arrow above the circle (only for directional actions)
+            directionDeg?.let { drawArrow(canvas, it) }
         }
 
-        diagnostic?.let { canvas.drawText(it, width / 2f, height - dp(70f), diag) }
+        diagnostic?.let { canvas.drawText(it, width / 2f, height - dp(40f), diag) }
+    }
 
-        if (success) drawTick(canvas)
+    private fun drawArrow(canvas: Canvas, deg: Float) {
+        val ax = ccx; val ay = ccy - rad - dp(40f); val r = dp(15f)
+        canvas.drawCircle(ax, ay, r, arrowBg)
+        // a right-pointing chevron, rotated to the direction (screen angle = -deg)
+        canvas.save()
+        canvas.rotate(-deg, ax, ay)
+        val s = dp(6.5f)
+        val p = Path()
+        p.moveTo(ax - s * 0.5f, ay - s); p.lineTo(ax + s * 0.7f, ay); p.lineTo(ax - s * 0.5f, ay + s)
+        canvas.drawPath(p, arrowFg)
+        canvas.restore()
     }
 
     private fun drawTick(canvas: Canvas) {
         tick.color = successColor
-        val cx = oval.centerX(); val cy = oval.centerY() + oval.height() * 0.16f; val s = dp(16f)
+        val cx = ccx; val cy = ccy + rad * 0.10f; val s = dp(15f)
         val p = Path()
         p.moveTo(cx - s, cy); p.lineTo(cx - s * 0.2f, cy + s * 0.8f); p.lineTo(cx + s, cy - s * 0.8f)
         canvas.drawPath(p, tick)
@@ -126,8 +148,7 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
     private fun dp(v: Float) = v * resources.displayMetrics.density
 
     companion object {
-        val GREEN: Int = Color.parseColor("#2CC05C")
-        private val NEUTRAL: Int = Color.parseColor("#E2E5EA")   // calm light-grey default ring
-        private val WRONG: Int = Color.parseColor("#E24B4A")     // subtle red on wrong move
+        val GREEN: Int = Color.parseColor("#7BCB7E")           // soft, calm green (per reference)
+        private val WRONG: Int = Color.parseColor("#E24B4A")
     }
 }
