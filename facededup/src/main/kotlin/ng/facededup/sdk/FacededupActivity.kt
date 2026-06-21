@@ -84,6 +84,7 @@ class FacededupActivity : AppCompatActivity() {
     private var brightnessBoosted = false         // whether we forced the screen bright for low light
     private var lumaEma = -1f                      // smoothed scene brightness (anti-flicker)
     private var darkRun = 0                        // consecutive dark frames before latching boost
+    private var wasWrong = false                   // edge-detect wrong move → buzz once
     private val movement by lazy { MovementMonitor(this) }
 
     private val cameraPermission =
@@ -295,11 +296,14 @@ class FacededupActivity : AppCompatActivity() {
         val satisfied = liveness.onFace(if (count == 1) face else null, true)   // one face = good to proceed
         if (satisfied) {
             runCatching { jpegB64(proxy, rot, mirror) }.getOrNull()?.let { frames.add(LivenessClient.Frame(it, proves)) }
-            vibrate(40)   // SHAP — haptic confirm on each completed action
+            haptic("action")   // crisp buzz on each completed challenge
         }
         val present = face != null && count == 1
         val finishedNow = liveness.isFinished
         val wrong = present && !finishedNow && liveness.wrong
+        // Buzz once when the user first moves the WRONG way (don't repeat every frame).
+        if (wrong && !wasWrong) haptic("wrong")
+        wasWrong = wrong
         val positioning = liveness.current == ActiveLiveness.Directive.Positioning
         // Coaching only matters while we're still getting the user framed, not mid-action.
         val coachMsg = if (positioning && present) when {
@@ -330,7 +334,7 @@ class FacededupActivity : AppCompatActivity() {
             }
         }
         if (liveness.isFinished && capturing) {
-            capturing = false; vibrate(0)   // success buzz (double pattern)
+            capturing = false; haptic("success")   // success double-buzz
             runOnUiThread { submit() }
         }
     }
@@ -372,15 +376,22 @@ class FacededupActivity : AppCompatActivity() {
             (getSystemService(android.os.VibratorManager::class.java))?.defaultVibrator
         else @Suppress("DEPRECATION") (getSystemService(VIBRATOR_SERVICE) as? android.os.Vibrator)
     }
-    /** SHAP: ms>0 = single tick (action done); ms==0 = success double-buzz. */
-    private fun vibrate(ms: Long) {
+    /** Haptic feedback. kind: "action" = crisp tick per completed challenge,
+     *  "success" = double-buzz on full pass, "wrong" = distinct error buzz. */
+    private fun haptic(kind: String) {
         val v = vibrator ?: return
         runCatching {
             if (android.os.Build.VERSION.SDK_INT >= 26) {
-                val effect = if (ms > 0) android.os.VibrationEffect.createOneShot(ms, android.os.VibrationEffect.DEFAULT_AMPLITUDE)
-                             else android.os.VibrationEffect.createWaveform(longArrayOf(0, 35, 60, 35), -1)
+                val amp = android.os.VibrationEffect.DEFAULT_AMPLITUDE
+                val effect = when (kind) {
+                    "success" -> android.os.VibrationEffect.createWaveform(longArrayOf(0, 45, 70, 55), -1)
+                    "wrong"   -> android.os.VibrationEffect.createWaveform(longArrayOf(0, 90, 90, 90), -1)
+                    else      -> android.os.VibrationEffect.createOneShot(60, amp)   // action tick (clearly felt)
+                }
                 v.vibrate(effect)
-            } else @Suppress("DEPRECATION") v.vibrate(if (ms > 0) ms else 90L)
+            } else @Suppress("DEPRECATION") v.vibrate(
+                when (kind) { "success" -> 120L; "wrong" -> longArrayOf(0, 90, 90, 90).sum(); else -> 60L }
+            )
         }
     }
 
