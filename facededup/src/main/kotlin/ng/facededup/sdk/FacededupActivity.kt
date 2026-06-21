@@ -288,6 +288,40 @@ class FacededupActivity : AppCompatActivity() {
                 OfflineSubmitWorker.schedule(applicationContext)
             }
         }
+
+        /** Adaptive screen brightness: the flow drives the screen to full brightness
+         *  for the capture (to light the user's face) and restores it on exit. Sets
+         *  the WINDOW brightness only, so it auto-reverts when the activity closes.
+         *  level "1" = full, "-1"/invalid = restore. */
+        @JavascriptInterface
+        fun setScreenBrightness(level: String) {
+            val f = level.toFloatOrNull()
+            runOnUiThread {
+                val lp = window.attributes
+                lp.screenBrightness =
+                    if (f == null || f < 0f) android.view.WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                    else f.coerceIn(0f, 1f)
+                window.attributes = lp
+            }
+        }
+
+        /** Native haptics — the reliable path in a WebView (navigator.vibrate is
+         *  blocked without recent user activation). "success" = one firm buzz,
+         *  "error" = sharp double-buzz (wrong move), else a light tick. */
+        @JavascriptInterface
+        fun haptic(kind: String) {
+            val vib: android.os.Vibrator? =
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S)
+                    getSystemService(android.os.VibratorManager::class.java)?.defaultVibrator
+                else @Suppress("DEPRECATION") (getSystemService(VIBRATOR_SERVICE) as? android.os.Vibrator)
+            if (vib == null || !vib.hasVibrator()) return
+            val effect = when (kind) {
+                "success" -> android.os.VibrationEffect.createOneShot(60, android.os.VibrationEffect.DEFAULT_AMPLITUDE)
+                "error", "fail", "wrong" -> android.os.VibrationEffect.createWaveform(longArrayOf(0, 45, 90, 45), -1)
+                else -> android.os.VibrationEffect.createOneShot(28, android.os.VibrationEffect.DEFAULT_AMPLITUDE)
+            }
+            try { vib.vibrate(effect) } catch (_: Exception) {}
+        }
     }
 
     /** Native-detection bridge: the flow ships a base64 JPEG per frame; we run MediaPipe
