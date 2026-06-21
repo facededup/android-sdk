@@ -119,31 +119,49 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
         canvas.drawRoundRect(cardRect, cardCorner, cardCorner, cardStroke)
         canvas.drawPath(ovalPath, clear)                                   // head-shaped camera window
 
-        // NO full ring. The only progress element is a single THICK arc on the action side.
         if (success) {
             drawBadge(canvas)
             if (verifying) drawDots(canvas)
         } else if (present) {
             val a = shownAction.coerceIn(0f, 1f)
-            if (glowAction) {                      // smile/blink → soft glow (no direction)
-                glow.color = successColor
-                glow.strokeWidth = arc.strokeWidth + dp(10f)
-                glow.alpha = (50 + 150 * a).toInt().coerceIn(35, 200)
-                canvas.drawPath(glowPath, glow); glow.alpha = 255
+            when {
+                // WRONG direction → unmistakable RED blur glow around the oval + red arrow.
+                wrong -> {
+                    drawBlurGlow(canvas, WRONG, 1f)
+                    directionDeg?.let { drawArrow(canvas, it) }
+                }
+                // smile/blink → SOFT BLUR GLOW on the oval, intensifying with progress (no ring).
+                glowAction -> drawBlurGlow(canvas, successColor, 0.35f + 0.65f * a)
+                // turns/tilts → single thick arc on the action side + directional arrow.
+                else -> {
+                    val screenCenter = -(directionDeg ?: 90f)
+                    val breathe = 6f * sin(phase * 2 * Math.PI).toFloat()
+                    val sweep = (96f + 110f * a + breathe).coerceIn(40f, 320f)
+                    arc.color = successColor
+                    arc.alpha = (220 + 35 * sin(phase * 2 * Math.PI)).toInt().coerceIn(190, 255)
+                    canvas.drawArc(arcRect, screenCenter - sweep / 2f, sweep, false, arc)
+                    arc.alpha = 255
+                    directionDeg?.let { drawArrow(canvas, it) }
+                }
             }
-            // single thick arc on the action side — smooth eased growth + a gentle breathing
-            // oscillation so it always feels alive.
-            val screenCenter = -(directionDeg ?: 90f)
-            val breathe = 6f * sin(phase * 2 * Math.PI).toFloat()
-            val sweep = (96f + 110f * a + breathe).coerceIn(40f, 320f)
-            arc.color = successColor
-            arc.alpha = (220 + 35 * sin(phase * 2 * Math.PI)).toInt().coerceIn(190, 255)
-            canvas.drawArc(arcRect, screenCenter - sweep / 2f, sweep, false, arc)
-            arc.alpha = 255
-            directionDeg?.let { drawArrow(canvas, it) }
         }
 
         diagnostic?.let { canvas.drawText(it, width / 2f, height - dp(36f), diag) }
+    }
+
+    /** Soft blurred glow hugging the oval — layered translucent strokes fake a Gaussian halo
+     *  (BlurMaskFilter is a no-op on hardware layers). [a] (0..1) scales reach + opacity. */
+    private fun drawBlurGlow(canvas: Canvas, color: Int, a: Float) {
+        val t = a.coerceIn(0f, 1f)
+        val layers = 6
+        for (i in layers downTo 1) {
+            val f = i / layers.toFloat()                       // outer (faint, wide) → inner (brighter)
+            glow.color = color
+            glow.strokeWidth = dp(3f) + dp(26f) * f * (0.55f + 0.45f * t)
+            glow.alpha = ((1f - f) * 150f * (0.4f + 0.6f * t)).toInt().coerceIn(0, 170)
+            canvas.drawPath(glowPath, glow)
+        }
+        glow.alpha = 255
     }
 
     /** Build a smooth head/egg-shaped path into [p] — widest at the cheeks, narrower rounded chin. */

@@ -287,9 +287,18 @@ class FacededupActivity : AppCompatActivity() {
         } else 0f
         val tooFar = count == 1 && coverage in 0.0001f..cfg.minFaceCoverage
         val tooClose = count == 1 && coverage > cfg.maxFaceCoverage
-        // Light + framing are ADVISORY only (coaching + brightness) — they must NEVER block
-        // the flow, or a dark room / large face stalls Positioning forever ("never succeeds").
-        // The flow proceeds whenever a single frontal face is held steadily.
+        // Is the face actually INSIDE the oval? (centered + right size). The bbox is in the
+        // rotation-corrected image frame, so normalise by the upright dimensions.
+        val centered = if (face != null && count == 1) {
+            val b = face.boundingBox
+            val rotated = rot == 90 || rot == 270
+            val iw = if (rotated) proxy.height.toFloat() else proxy.width.toFloat()
+            val ih = if (rotated) proxy.width.toFloat() else proxy.height.toFloat()
+            (b.exactCenterX() / iw) in 0.25f..0.75f && (b.exactCenterY() / ih) in 0.18f..0.74f
+        } else false
+        // Head must be positioned in the oval to start (centered + sized) — but NOT gated on
+        // light (a dark room must never permanently stall Positioning).
+        val framedOk = count == 1 && centered && !tooFar && !tooClose
 
         // Keep a short ring of recent frames WITH their sharpness, so proving frames pick the
         // SHARPEST nearby shot (not the motion-blurred one captured the instant a turn lands —
@@ -308,7 +317,8 @@ class FacededupActivity : AppCompatActivity() {
         }
 
         val proves = liveness.current.proves
-        val satisfied = liveness.onFace(if (count == 1) face else null, true)   // one face = good to proceed
+        // Positioning only completes when the head is framed in the oval (framedOk).
+        val satisfied = liveness.onFace(if (count == 1) face else null, framedOk)
         if (satisfied) {
             // submit the SHARPEST of the recent frames (all near the satisfying pose)
             val best = recentFrames.maxByOrNull { it.second }?.first ?: lastBitmap
@@ -324,9 +334,10 @@ class FacededupActivity : AppCompatActivity() {
         val positioning = liveness.current == ActiveLiveness.Directive.Positioning
         // Coaching only matters while we're still getting the user framed, not mid-action.
         val coachMsg = if (positioning && present) when {
-            dark -> cfg.str("too_dark")
             tooFar -> cfg.str("move_closer")
             tooClose -> cfg.str("move_back")
+            !centered -> cfg.str("center_face")   // head not in the oval yet
+            dark -> cfg.str("too_dark")
             else -> null
         } else null
         val act = if (present && !finishedNow && !positioning) liveness.subProgress else 0f
@@ -422,12 +433,10 @@ class FacededupActivity : AppCompatActivity() {
         overlay.success = true; overlay.present = true; overlay.verifying = true
         overlay.directionDeg = null; overlay.wrong = false
         hint.text = cfg.str("great")
-        // Friendly status in the bottom toast — honest if we're offline.
-        val online = LivenessClient.isOnline(applicationContext)
-        toast?.apply {
-            text = if (online) cfg.str("verifying") else cfg.str("offline_saved")
-            visibility = android.view.View.VISIBLE
-        }
+        // No "verifying" noise — the pulsing dots indicate processing. Only surface the
+        // bottom toast when OFFLINE, where the user genuinely needs to know the result is delayed.
+        if (!LivenessClient.isOnline(applicationContext))
+            toast?.apply { text = cfg.str("offline_saved"); visibility = android.view.View.VISIBLE }
         val durationMs = if (captureStartMs > 0) System.currentTimeMillis() - captureStartMs else 0L
         // Use the SHARPEST frontal frame as the portrait (the image the server scores for
         // quality + PAD). Falls back to whatever we have if none was captured.

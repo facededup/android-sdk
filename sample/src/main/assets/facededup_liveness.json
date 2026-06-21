@@ -6,7 +6,7 @@
   "instructionSizeSp": 18,
   "ringWidthDp": 9,
   "successColor": "#22A447",
-  "showDiagnostics": true,
+  "showDiagnostics": false,
   "cancelColor": "#3A3A3A",
   "showCancel": true,
   "strings": {
