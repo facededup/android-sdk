@@ -53,6 +53,9 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
 
     private val cardRect = RectF()
     private val ovalRect = RectF()
+    private val arcRect = RectF()
+    private val ovalPath = Path()       // cached head-shape cutout (rebuilt only on resize)
+    private val glowPath = Path()       // cached head-shape for the glow
     private var ccx = 0f; private var ccy = 0f
     private var cardCorner = dp(24f)
     private var phase = 0f
@@ -99,6 +102,9 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
         ccx = w / 2f
         ccy = h * 0.46f
         ovalRect.set(ccx - ovw / 2, ccy - ovh / 2, ccx + ovw / 2, ccy + ovh / 2)
+        val ag = dp(16f)
+        arcRect.set(ovalRect.left - ag, ovalRect.top - ag, ovalRect.right + ag, ovalRect.bottom + ag)
+        buildHead(ovalRect, ovalPath); buildHead(arcRect, glowPath)
         val m = w * 0.06f
         // card wraps: instruction + arrow above, oval, guide dots below.
         cardRect.set(m, ovalRect.top - dp(118f), w - m, ovalRect.bottom + dp(78f))
@@ -111,44 +117,46 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), surround)
         canvas.drawRoundRect(cardRect, cardCorner, cardCorner, card)
         canvas.drawRoundRect(cardRect, cardCorner, cardCorner, cardStroke)
-        canvas.drawOval(ovalRect, clear)                                   // camera window
+        canvas.drawPath(ovalPath, clear)                                   // head-shaped camera window
 
-        // Two distinct rings: a thin BORDER hugging the oval, and the progress ARC on its
-        // OWN outer ring (clearly separated from the border).
-        val bg = dp(4f)
-        val borderRect = RectF(ovalRect.left - bg, ovalRect.top - bg, ovalRect.right + bg, ovalRect.bottom + bg)
-        val ag = dp(18f)
-        val arcRect = RectF(ovalRect.left - ag, ovalRect.top - ag, ovalRect.right + ag, ovalRect.bottom + ag)
-
+        // NO full ring. The only progress element is a single THICK arc on the action side.
         if (success) {
-            border.color = successColor
-            canvas.drawOval(borderRect, border)        // tight green border
-            arc.color = successColor
-            canvas.drawOval(arcRect, arc)              // completed outer ring
             drawBadge(canvas)
             if (verifying) drawDots(canvas)
-        } else {
+        } else if (present) {
             val a = shownAction.coerceIn(0f, 1f)
-            // thin oval border hugging the oval: neutral until a face is present, then green
-            border.color = when { !present -> NEUTRAL; wrong -> WRONG; else -> successColor }
-            canvas.drawOval(borderRect, border)
-            if (present) {
-                if (glowAction) {                  // smile/blink → glow on the outer ring
-                    glow.color = successColor
-                    glow.strokeWidth = arc.strokeWidth + dp(10f)
-                    glow.alpha = (50 + 150 * a).toInt().coerceIn(35, 200)
-                    canvas.drawOval(arcRect, glow); glow.alpha = 255
-                }
-                // progress arc on its own outer ring (starts long, grows)
-                val screenCenter = -(directionDeg ?: 90f)
-                val sweep = 70f + 110f * a
-                arc.color = if (wrong) WRONG else successColor
-                canvas.drawArc(arcRect, screenCenter - sweep / 2f, sweep, false, arc)
-                directionDeg?.let { drawArrow(canvas, it) }
+            if (glowAction) {                      // smile/blink → soft glow (no direction)
+                glow.color = successColor
+                glow.strokeWidth = arc.strokeWidth + dp(10f)
+                glow.alpha = (50 + 150 * a).toInt().coerceIn(35, 200)
+                canvas.drawPath(glowPath, glow); glow.alpha = 255
             }
+            // single thick arc on the action side — smooth eased growth + a gentle breathing
+            // oscillation so it always feels alive.
+            val screenCenter = -(directionDeg ?: 90f)
+            val breathe = 6f * sin(phase * 2 * Math.PI).toFloat()
+            val sweep = (96f + 110f * a + breathe).coerceIn(40f, 320f)
+            arc.color = successColor
+            arc.alpha = (220 + 35 * sin(phase * 2 * Math.PI)).toInt().coerceIn(190, 255)
+            canvas.drawArc(arcRect, screenCenter - sweep / 2f, sweep, false, arc)
+            arc.alpha = 255
+            directionDeg?.let { drawArrow(canvas, it) }
         }
 
         diagnostic?.let { canvas.drawText(it, width / 2f, height - dp(36f), diag) }
+    }
+
+    /** Build a smooth head/egg-shaped path into [p] — widest at the cheeks, narrower rounded chin. */
+    private fun buildHead(r: RectF, p: Path) {
+        val cx = r.centerX(); val w = r.width() / 2f; val h = r.height()
+        val widestY = r.top + h * 0.43f
+        p.reset()
+        p.moveTo(cx, r.top)
+        p.cubicTo(cx + w * 0.62f, r.top, cx + w, widestY - (widestY - r.top) * 0.55f, cx + w, widestY)
+        p.cubicTo(cx + w, widestY + (r.bottom - widestY) * 0.55f, cx + w * 0.58f, r.bottom, cx, r.bottom)
+        p.cubicTo(cx - w * 0.58f, r.bottom, cx - w, widestY + (r.bottom - widestY) * 0.55f, cx - w, widestY)
+        p.cubicTo(cx - w, widestY - (widestY - r.top) * 0.55f, cx - w * 0.62f, r.top, cx, r.top)
+        p.close()
     }
 
     // Dark-navy circular arrow chip above the oval, glyph rotated to the direction.

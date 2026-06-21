@@ -35,7 +35,7 @@ data class FacededupLivenessConfig(
     /** UI. */
     val instructionSizeSp: Float = 18f,   // instruction text size (sp) — configurable
     val fontAsset: String? = null,        // custom font path under app assets (e.g. "fonts/onset.ttf")
-    val ringWidthDp: Float = 5f,          // progress-arc thickness (thin, calm)
+    val ringWidthDp: Float = 8f,          // progress-arc thickness
     val ringColor: String? = null,      // hex; default = theme primary / green
     val successColor: String? = null,   // hex; default green
     val scrimColor: String? = null,     // hex (with alpha); default light grey

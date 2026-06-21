@@ -151,32 +151,27 @@ internal class ActiveLiveness(private val cfg: FacededupLivenessConfig) {
         val smileT = cfg.smileThreshold * k
         val blinkT = (cfg.blinkThreshold / k).coerceAtMost(EYE_OPEN - 0.05f)
 
+        // DIRECTION-AGNOSTIC turns/tilts: success depends on the MAGNITUDE of head movement,
+        // not its sign. Front-camera mirroring flips the yaw/pitch sign per device, which made
+        // "turn left" read as the wrong sign and never register (stuck at 0%). Using |yaw| /
+        // |pitchDelta| works on every device. The arrow still guides the user (directionDeg).
+        val yawMag = abs(yaw); val pitchMag = abs(pitchDelta)
         when (current) {
-            Directive.TurnLeft  -> { subProgress = (yaw / turnT).coerceIn(0f, 1f); directionDeg = 180f }
-            Directive.TurnRight -> { subProgress = (-yaw / turnT).coerceIn(0f, 1f); directionDeg = 0f }
-            Directive.LookUp    -> { subProgress = (pitchDelta / tiltT).coerceIn(0f, 1f); directionDeg = 90f }
-            Directive.LookDown  -> { subProgress = (-pitchDelta / tiltT).coerceIn(0f, 1f); directionDeg = 270f }
+            Directive.TurnLeft  -> { subProgress = (yawMag / turnT).coerceIn(0f, 1f); directionDeg = 180f }
+            Directive.TurnRight -> { subProgress = (yawMag / turnT).coerceIn(0f, 1f); directionDeg = 0f }
+            Directive.LookUp    -> { subProgress = (pitchMag / tiltT).coerceIn(0f, 1f); directionDeg = 90f }
+            Directive.LookDown  -> { subProgress = (pitchMag / tiltT).coerceIn(0f, 1f); directionDeg = 270f }
             Directive.Smile     -> { subProgress = (smile / smileT).coerceIn(0f, 1f); directionDeg = null }
             Directive.Blink     -> { subProgress = ((EYE_OPEN - eyeOpen) / (EYE_OPEN - blinkT)).coerceIn(0f, 1f); directionDeg = null }
             else -> { subProgress = 0f; directionDeg = null }
         }
-
-        // moving clearly the WRONG way → flag for a red ring + corrective nudge
-        wrong = when (current) {
-            Directive.TurnLeft  -> yaw < -6f
-            Directive.TurnRight -> yaw >  6f
-            Directive.LookUp    -> pitchDelta < -6f
-            Directive.LookDown  -> pitchDelta >  6f
-            else -> false
-        }
+        wrong = false   // any-direction turn counts → there is no "wrong way"
 
         val satisfied = when (current) {
-            Directive.TurnLeft  -> sawNeutral && yaw >  turnT
-            Directive.TurnRight -> sawNeutral && yaw < -turnT
-            Directive.LookUp    -> sawNeutral && pitchDelta >  tiltT
-            Directive.LookDown  -> sawNeutral && pitchDelta < -tiltT
-            Directive.Smile     -> smile > smileT
-            Directive.Blink     -> sawEyesOpen && eyeOpen < blinkT
+            Directive.TurnLeft, Directive.TurnRight -> sawNeutral && yawMag > turnT
+            Directive.LookUp, Directive.LookDown    -> sawNeutral && pitchMag > tiltT
+            Directive.Smile -> smile > smileT
+            Directive.Blink -> sawEyesOpen && eyeOpen < blinkT
             else -> false
         }
         if (satisfied) {
