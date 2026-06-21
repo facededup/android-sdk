@@ -33,7 +33,7 @@ data class FacededupLivenessConfig(
     val minFaceCoverage: Float = 0.05f,   // face/frame area below this = "move closer"
     val maxFaceCoverage: Float = 0.55f,   // face/frame area above this = "move back"
     /** UI. */
-    val instructionSizeSp: Float = 14f,   // instruction text size (sp) — small by default, configurable
+    val instructionSizeSp: Float = 18f,   // instruction text size (sp) — configurable
     val fontAsset: String? = null,        // custom font path under app assets (e.g. "fonts/onset.ttf")
     val ringWidthDp: Float = 5f,          // progress-arc thickness (thin, calm)
     val ringColor: String? = null,      // hex; default = theme primary / green

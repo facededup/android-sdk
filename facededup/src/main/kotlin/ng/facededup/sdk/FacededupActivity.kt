@@ -120,8 +120,8 @@ class FacededupActivity : AppCompatActivity() {
 
     private fun buildUi(bgHex: String?) {
         val root = FrameLayout(this)
-        // Dark behind the live camera (camera fills the screen; the overlay dims it).
-        root.setBackgroundColor(runCatching { bgHex?.let { Color.parseColor(it) } }.getOrNull() ?: Color.parseColor("#0E0F12"))
+        // Light page behind everything (matches the hosted/WebView flow). Theme bg overrides.
+        root.setBackgroundColor(runCatching { bgHex?.let { Color.parseColor(it) } }.getOrNull() ?: Color.parseColor("#F1F5F5"))
         previewView = PreviewView(this).apply {
             layoutParams = FrameLayout.LayoutParams(MATCH, MATCH)
             scaleType = PreviewView.ScaleType.FILL_CENTER
@@ -188,10 +188,10 @@ class FacededupActivity : AppCompatActivity() {
             root.addView(cancel)
         }
         setContentView(root)
-        // Anchor the instruction just BELOW the oval (inside the card) once geometry is known.
+        // Anchor the instruction near the TOP of the card, ABOVE the oval (web-flow style).
         overlay.onLaidOut = {
             (hint.layoutParams as FrameLayout.LayoutParams).let {
-                it.topMargin = (overlay.ovalBottomPx() + dp(28)).toInt(); hint.layoutParams = it
+                it.topMargin = (overlay.cardTopPx() + dp(16)).toInt(); hint.layoutParams = it
             }
         }
     }
@@ -391,7 +391,8 @@ class FacededupActivity : AppCompatActivity() {
         lastBitmap?.let { bmp ->
             shotView?.apply { setImageBitmap(bmp); visibility = android.view.View.VISIBLE }
         }
-        overlay.success = true; overlay.present = true; overlay.directionDeg = null; overlay.wrong = false
+        overlay.success = true; overlay.present = true; overlay.verifying = true
+        overlay.directionDeg = null; overlay.wrong = false
         hint.text = cfg.str("great")
         // Friendly status in the bottom toast — honest if we're offline.
         val online = LivenessClient.isOnline(applicationContext)
