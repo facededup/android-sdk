@@ -89,6 +89,7 @@ class FacededupActivity : AppCompatActivity() {
     private var darkRun = 0                        // consecutive dark frames before latching boost
     private var wasWrong = false                   // edge-detect wrong move → buzz once
     private var frameLog = 0                        // throttle diagnostic logcat
+    private var meteredOnFace = false               // re-meter focus/AE once the face is framed
     private val movement by lazy { MovementMonitor(this) }
 
     private val cameraPermission =
@@ -244,11 +245,35 @@ class FacededupActivity : AppCompatActivity() {
             val selector = if (agentMode) CameraSelector.DEFAULT_BACK_CAMERA else CameraSelector.DEFAULT_FRONT_CAMERA
             runCatching {
                 provider.unbindAll()
-                provider.bindToLifecycle(this, selector, preview, analysis)
+                val cam = provider.bindToLifecycle(this, selector, preview, analysis)
+                camera = cam
                 captureStartMs = System.currentTimeMillis()
                 movement.start()   // sample motion/orientation/proximity during capture
+                // Tune the camera to the OVAL: AF + AE + AWB all metered on the face region.
+                previewView.post { meterOnOval() }
             }.onFailure { finishWith("{\"type\":\"liveness\",\"outcome\":\"error\",\"error\":\"camera_init\"}") }
         }, ContextCompat.getMainExecutor(this))
+    }
+
+    private var camera: androidx.camera.core.Camera? = null
+
+    /** Focus + exposure + white-balance metered on the OVAL (where the face is) — face-priority
+     *  AF and oval-only AE so a bright background can't blow out the face. Re-runs as the face
+     *  settles. Best-effort: a no-op if the device/camera doesn't support metering. */
+    private fun meterOnOval() {
+        runCatching {
+            val ctrl = camera?.cameraControl ?: return
+            if (previewView.width == 0 || previewView.height == 0) return
+            val pt = previewView.meteringPointFactory
+                .createPoint(previewView.width / 2f, previewView.height * 0.46f, 0.30f)  // oval centre, ~30% size
+            val action = androidx.camera.core.FocusMeteringAction.Builder(
+                pt,
+                androidx.camera.core.FocusMeteringAction.FLAG_AF or
+                    androidx.camera.core.FocusMeteringAction.FLAG_AE or
+                    androidx.camera.core.FocusMeteringAction.FLAG_AWB,
+            ).setAutoCancelDuration(4, java.util.concurrent.TimeUnit.SECONDS).build()  // re-meter, don't lock forever
+            ctrl.startFocusAndMetering(action)
+        }.onFailure { android.util.Log.w("FacededupLive", "meterOnOval: ${it.message}") }
     }
 
     @androidx.camera.core.ExperimentalGetImage
@@ -304,6 +329,8 @@ class FacededupActivity : AppCompatActivity() {
         // Head must be positioned in the oval to start (centered + sized) — but NOT gated on
         // light (a dark room must never permanently stall Positioning).
         val framedOk = count == 1 && centered && !tooFar && !tooClose
+        // Re-meter focus/exposure once the face is actually in the oval (best moment to lock onto it).
+        if (framedOk && !meteredOnFace) { meteredOnFace = true; runOnUiThread { meterOnOval() } }
 
         // Keep a short ring of recent frames WITH their sharpness, so proving frames pick the
         // SHARPEST nearby shot (not the motion-blurred one captured the instant a turn lands —
