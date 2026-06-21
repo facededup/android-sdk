@@ -69,6 +69,9 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
     private var shownAction: Float = 0f
     var directionDeg: Float? = null            // 0=right,90=up,180=left,270=down; null = no direction
     var present: Boolean = false               // a single face is in frame
+    var positioning: Boolean = false           // still getting the user framed (show readiness gauge)
+    var quality: Float = 0f                    // 0..1 capture readiness (centering + size + light)
+    private var shownQuality: Float = 0f
     var glowAction: Boolean = false            // current action is smile/blink → glow the oval
     var success: Boolean = false
     var verifying: Boolean = false             // capture done, check in flight → pulsing dots
@@ -132,6 +135,18 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
             if (verifying) drawSpinner(canvas)         // preloader while we verify
         } else if (present) {
             val a = shownAction.coerceIn(0f, 1f)
+            shownQuality += (quality - shownQuality) * 0.18f
+            if (positioning) {
+                // READINESS GAUGE: the border fades from neutral grey → solid green as the
+                // user's framing + lighting improve, so they can SEE when they're ready.
+                val q = shownQuality.coerceIn(0f, 1f)
+                border.color = lerpColor(NEUTRAL, successColor, q)
+                border.alpha = (110 + 145 * q).toInt().coerceIn(110, 255)
+                canvas.drawPath(borderPath, border)
+                border.alpha = 255
+                diagnostic?.let { canvas.drawText(it, width / 2f, height - dp(36f), diag) }
+                return
+            }
             // THIN border line on the oval — RED on a wrong move, green otherwise; a gentle
             // brightness pulse on smile/blink stands in for the old (too-thick) glow.
             border.color = if (wrong) WRONG else successColor
@@ -203,6 +218,14 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
         canvas.drawArc(rect, 0f, 360f, false, spin)            // faint track
         spin.alpha = 255
         canvas.drawArc(rect, phase * 360f, 90f, false, spin)   // rotating head
+    }
+
+    /** ARGB lerp a→b by t (0..1) — neutral→green as capture readiness rises. */
+    private fun lerpColor(a: Int, b: Int, t: Float): Int {
+        val u = t.coerceIn(0f, 1f)
+        val ar = (a ushr 16) and 0xFF; val ag = (a ushr 8) and 0xFF; val ab = a and 0xFF
+        val br = (b ushr 16) and 0xFF; val bg = (b ushr 8) and 0xFF; val bb = b and 0xFF
+        return Color.rgb((ar + (br - ar) * u).toInt(), (ag + (bg - ag) * u).toInt(), (ab + (bb - ab) * u).toInt())
     }
 
     private fun dp(v: Float) = v * resources.displayMetrics.density

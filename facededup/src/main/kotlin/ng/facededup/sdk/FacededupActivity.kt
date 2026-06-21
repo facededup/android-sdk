@@ -378,6 +378,12 @@ class FacededupActivity : AppCompatActivity() {
         if (wrong && !wasWrong) haptic("wrong")
         wasWrong = wrong
         val positioning = liveness.current == ActiveLiveness.Directive.Positioning
+        // Capture-readiness score (0..1) — centering + size + lighting. Drives the live
+        // border gauge so the user sees when they're ready before the challenges start.
+        val quality = if (!present) 0f else
+            (if (centered) 0.4f else 0f) +
+            (if (coverage in cfg.minFaceCoverage..cfg.maxFaceCoverage) 0.35f else 0f) +
+            (if (!dark) 0.25f else 0f)
         // Adaptive guidance (positioning only): one specific, prioritised nudge.
         val coachMsg = if (positioning && present) when {
             tooClose -> cfg.str("move_back")
@@ -403,6 +409,8 @@ class FacededupActivity : AppCompatActivity() {
             android.util.Log.i("FacededupLive", "$dbg cov=${"%.2f".format(coverage)} cen=$centered wrong=$wrong")
         runOnUiThread {
             overlay.present = present
+            overlay.positioning = positioning
+            overlay.quality = quality
             overlay.wrong = wrong
             overlay.actionProgress = act                  // current action drives the single arc
             overlay.glowAction = glowAct
