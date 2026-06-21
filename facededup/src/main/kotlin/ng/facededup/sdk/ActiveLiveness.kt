@@ -172,7 +172,8 @@ internal class ActiveLiveness(private val cfg: FacededupLivenessConfig) {
             else -> false
         }
 
-        val satisfied = when (current) {
+        // Whether the asked pose is met THIS frame (correct direction + magnitude).
+        val poseMet = when (current) {
             Directive.TurnLeft  -> sawNeutral && yaw >  turnT
             Directive.TurnRight -> sawNeutral && yaw < -turnT
             Directive.LookUp    -> sawNeutral && pitchDelta >  tiltT
@@ -181,12 +182,20 @@ internal class ActiveLiveness(private val cfg: FacededupLivenessConfig) {
             Directive.Blink -> sawEyesOpen && eyeOpen < blinkT
             else -> false
         }
+        // HOLD-TO-CONFIRM: the pose must be SUSTAINED for a few frames, so a momentary flick
+        // or a random head-shake that just brushes the threshold does NOT count as the action.
+        if (poseMet && !wrong) holdFrames++ else holdFrames = 0
+        val holdNeeded = if (current == Directive.Blink) 2 else 3
+        val satisfied = holdFrames >= holdNeeded
         if (satisfied) {
             index++; sawNeutral = false; sawEyesOpen = false; subProgress = 0f; wrong = false
+            holdFrames = 0
             actionStartMs = System.currentTimeMillis()   // reset the adaptive timer for the next action
         }
         return satisfied
     }
+
+    private var holdFrames = 0
 
     private var actionStartMs = 0L
     /** Relaxation factor 1.0 → 0.70 over ~6s on the current action (adaptive difficulty). */
