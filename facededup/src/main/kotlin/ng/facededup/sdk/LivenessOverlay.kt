@@ -30,10 +30,13 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
     }
     private val clear = Paint(Paint.ANTI_ALIAS_FLAG).apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR) }
     private val border = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE; strokeWidth = dp(2f); strokeCap = Paint.Cap.ROUND
+        style = Paint.Style.STROKE; strokeWidth = dp(3f); strokeCap = Paint.Cap.ROUND
     }
     private val arc = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE; strokeWidth = dp(5f); strokeCap = Paint.Cap.ROUND
+    }
+    private val spin = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeWidth = dp(3.5f); strokeCap = Paint.Cap.ROUND
     }
     private val glow = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND }
     private val arrowBg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = NAVY }   // dark-navy arrow chip
@@ -56,6 +59,7 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
     private val arcRect = RectF()
     private val ovalPath = Path()       // cached head-shape cutout (rebuilt only on resize)
     private val glowPath = Path()       // cached head-shape for the glow
+    private val borderPath = Path()     // thin border line, just outside the cutout edge
     private var ccx = 0f; private var ccy = 0f
     private var cardCorner = dp(24f)
     private var phase = 0f
@@ -104,7 +108,9 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
         ovalRect.set(ccx - ovw / 2, ccy - ovh / 2, ccx + ovw / 2, ccy + ovh / 2)
         val ag = dp(16f)
         arcRect.set(ovalRect.left - ag, ovalRect.top - ag, ovalRect.right + ag, ovalRect.bottom + ag)
-        buildHead(ovalRect, ovalPath); buildHead(arcRect, glowPath)
+        val bg = dp(2f)
+        val borderRect = RectF(ovalRect.left - bg, ovalRect.top - bg, ovalRect.right + bg, ovalRect.bottom + bg)
+        buildHead(ovalRect, ovalPath); buildHead(arcRect, glowPath); buildHead(borderRect, borderPath)
         val m = w * 0.06f
         // card wraps: instruction + arrow above, oval, guide dots below.
         cardRect.set(m, ovalRect.top - dp(118f), w - m, ovalRect.bottom + dp(78f))
@@ -120,48 +126,33 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
         canvas.drawPath(ovalPath, clear)                                   // head-shaped camera window
 
         if (success) {
+            border.color = successColor
+            canvas.drawPath(borderPath, border)        // thin green border
             drawBadge(canvas)
-            if (verifying) drawDots(canvas)
+            if (verifying) drawSpinner(canvas)         // preloader while we verify
         } else if (present) {
             val a = shownAction.coerceIn(0f, 1f)
-            when {
-                // WRONG direction → unmistakable RED blur glow around the oval + red arrow.
-                wrong -> {
-                    drawBlurGlow(canvas, WRONG, 1f)
-                    directionDeg?.let { drawArrow(canvas, it) }
-                }
-                // smile/blink → SOFT BLUR GLOW on the oval, intensifying with progress (no ring).
-                glowAction -> drawBlurGlow(canvas, successColor, 0.35f + 0.65f * a)
-                // turns/tilts → single thick arc on the action side + directional arrow.
-                else -> {
-                    val screenCenter = -(directionDeg ?: 90f)
-                    val breathe = 6f * sin(phase * 2 * Math.PI).toFloat()
-                    val sweep = (96f + 110f * a + breathe).coerceIn(40f, 320f)
-                    arc.color = successColor
-                    arc.alpha = (220 + 35 * sin(phase * 2 * Math.PI)).toInt().coerceIn(190, 255)
-                    canvas.drawArc(arcRect, screenCenter - sweep / 2f, sweep, false, arc)
-                    arc.alpha = 255
-                    directionDeg?.let { drawArrow(canvas, it) }
-                }
+            // THIN border line on the oval — RED on a wrong move, green otherwise; a gentle
+            // brightness pulse on smile/blink stands in for the old (too-thick) glow.
+            border.color = if (wrong) WRONG else successColor
+            border.alpha = if (glowAction)
+                (150 + 105 * (0.5 + 0.5 * sin(phase * 2 * Math.PI))).toInt().coerceIn(150, 255) else 255
+            canvas.drawPath(borderPath, border)
+            border.alpha = 255
+            // turns/tilts → progress arc on the outer ring; wrong → just the arrow.
+            if (!wrong && !glowAction) {
+                val screenCenter = -(directionDeg ?: 90f)
+                val breathe = 6f * sin(phase * 2 * Math.PI).toFloat()
+                val sweep = (96f + 110f * a + breathe).coerceIn(40f, 320f)
+                arc.color = successColor
+                arc.alpha = (220 + 35 * sin(phase * 2 * Math.PI)).toInt().coerceIn(190, 255)
+                canvas.drawArc(arcRect, screenCenter - sweep / 2f, sweep, false, arc)
+                arc.alpha = 255
             }
+            directionDeg?.let { drawArrow(canvas, it) }
         }
 
         diagnostic?.let { canvas.drawText(it, width / 2f, height - dp(36f), diag) }
-    }
-
-    /** Soft blurred glow hugging the oval — layered translucent strokes fake a Gaussian halo
-     *  (BlurMaskFilter is a no-op on hardware layers). [a] (0..1) scales reach + opacity. */
-    private fun drawBlurGlow(canvas: Canvas, color: Int, a: Float) {
-        val t = a.coerceIn(0f, 1f)
-        val layers = 6
-        for (i in layers downTo 1) {
-            val f = i / layers.toFloat()                       // outer (faint, wide) → inner (brighter)
-            glow.color = color
-            glow.strokeWidth = dp(3f) + dp(26f) * f * (0.55f + 0.45f * t)
-            glow.alpha = ((1f - f) * 150f * (0.4f + 0.6f * t)).toInt().coerceIn(0, 170)
-            canvas.drawPath(glowPath, glow)
-        }
-        glow.alpha = 255
     }
 
     /** Build a smooth head/egg-shaped path into [p] — widest at the cheeks, narrower rounded chin. */
@@ -177,14 +168,18 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
         p.close()
     }
 
-    // Dark-navy circular arrow chip above the oval, glyph rotated to the direction.
+    // Dark-navy circular arrow chip above the oval — a clean, symmetric chevron rotated to
+    // the asked direction (turns red on a wrong move so it reads with the border).
     private fun drawArrow(canvas: Canvas, deg: Float) {
-        val ax = ccx; val ay = ovalRect.top - dp(38f); val r = dp(16f)
+        val ax = ccx; val ay = ovalRect.top - dp(40f); val r = dp(17f)
+        arrowBg.color = if (wrong) WRONG else NAVY
         canvas.drawCircle(ax, ay, r, arrowBg)
         canvas.save(); canvas.rotate(-deg, ax, ay)
-        val s = dp(6.5f)
-        val p = Path()
-        p.moveTo(ax - s * 0.5f, ay - s); p.lineTo(ax + s * 0.7f, ay); p.lineTo(ax - s * 0.5f, ay + s)
+        val s = dp(7f)
+        val p = Path()                               // symmetric ">" chevron (rounded join/cap)
+        p.moveTo(ax - s * 0.55f, ay - s * 0.8f)
+        p.lineTo(ax + s * 0.6f, ay)
+        p.lineTo(ax - s * 0.55f, ay + s * 0.8f)
         canvas.drawPath(p, arrowFg)
         canvas.restore()
     }
@@ -199,15 +194,15 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
         canvas.drawPath(p, badgeTick)
     }
 
-    // Three pulsing brand dots below the oval while the check is in flight.
-    private fun drawDots(canvas: Canvas) {
-        val y = ovalRect.bottom + dp(34f); val gap = dp(18f); val r = dp(4.5f)
-        for (i in -1..1) {
-            val pulse = (0.5 + 0.5 * sin((phase + i * 0.16f) * 2 * Math.PI)).toFloat()
-            dot.alpha = (60 + 195 * pulse).toInt().coerceIn(60, 255)
-            canvas.drawCircle(ccx + i * gap, y, r * (0.7f + 0.3f * pulse), dot)
-        }
-        dot.alpha = 255
+    // Spinner preloader below the oval while the check is in flight (rotating arc).
+    private fun drawSpinner(canvas: Canvas) {
+        val cy = ovalRect.bottom + dp(40f); val r = dp(11f)
+        val rect = RectF(ccx - r, cy - r, ccx + r, cy + r)
+        spin.color = successColor
+        spin.alpha = 60
+        canvas.drawArc(rect, 0f, 360f, false, spin)            // faint track
+        spin.alpha = 255
+        canvas.drawArc(rect, phase * 360f, 90f, false, spin)   // rotating head
     }
 
     private fun dp(v: Float) = v * resources.displayMetrics.density
