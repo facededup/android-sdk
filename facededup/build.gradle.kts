@@ -19,7 +19,7 @@ plugins {
 }
 
 group = "ng.facededup"
-version = "2.0.0-alpha21"
+version = "2.0.0-alpha22"
 
 // ── Encrypted-ingest config (NEVER hard-code the secret) ──────────────────────
 // Base URL + ingest secret are read at BUILD TIME from (in precedence order):
@@ -104,7 +104,7 @@ publishing {
         register<MavenPublication>("release") {
             groupId = "ng.facededup"
             artifactId = "facededup"
-            version = "2.0.0-alpha21"
+            version = "2.0.0-alpha22"
             afterEvaluate { from(components["release"]) }
             pom {
                 name.set("Facededup Android SDK")

@@ -48,6 +48,7 @@ class FacededupActivity : AppCompatActivity() {
         const val EXTRA_CLOUD_PROJECT = "facededup.cloudProjectNumber"
         const val EXTRA_PARAMS = "facededup.params"
         const val EXTRA_RESULT = "facededup.result"
+        private const val MAX_RECOVERIES = 3   // re-acquire attempts before the hard timeout ends it
     }
 
     private lateinit var previewView: PreviewView
@@ -90,6 +91,9 @@ class FacededupActivity : AppCompatActivity() {
     private var wasWrong = false                   // edge-detect wrong move → buzz once
     private var frameLog = 0                        // throttle diagnostic logcat
     private var meteredOnFace = false               // re-meter focus/AE once the face is framed
+    private var actionWatchMs = 0L                   // when the current challenge step started
+    private var lastActionIndex = -1                 // detect when the step advances
+    private var recoveries = 0                       // smart-recovery attempts this session
     private val movement by lazy { MovementMonitor(this) }
 
     private val cameraPermission =
@@ -360,6 +364,16 @@ class FacededupActivity : AppCompatActivity() {
         val present = face != null && count == 1
         val finishedNow = liveness.isFinished
         val wrong = present && !finishedNow && liveness.wrong
+        // SMART RECOVERY: if a challenge step stalls, don't fail — re-acquire (brightness + focus)
+        // and keep guiding, escalating up to a few times. Only the hard totalTimeout ends it.
+        val idx = if (liveness.current == ActiveLiveness.Directive.Positioning) -1 else liveness.progress
+        if (idx != lastActionIndex) { lastActionIndex = idx; actionWatchMs = System.currentTimeMillis() }
+        else if (!finishedNow && actionWatchMs > 0 &&
+            System.currentTimeMillis() - actionWatchMs > cfg.actionTimeoutMs && recoveries < MAX_RECOVERIES) {
+            recoveries++; actionWatchMs = System.currentTimeMillis()
+            android.util.Log.i("FacededupLive", "recovery #$recoveries (step=$idx) re-meter + brightness")
+            runOnUiThread { applyBrightness(true); meteredOnFace = false; meterOnOval() }
+        }
         // Buzz once when the user first moves the WRONG way (don't repeat every frame).
         if (wrong && !wasWrong) haptic("wrong")
         wasWrong = wrong
@@ -475,6 +489,19 @@ class FacededupActivity : AppCompatActivity() {
     private fun submit() {
         if (done) return
         movement.stop()
+        val durationMs = if (captureStartMs > 0) System.currentTimeMillis() - captureStartMs else 0L
+        // Build the payload FIRST. Use the SHARPEST frontal frame as the portrait.
+        bestPortraitBmp?.let { portrait = runCatching { jpegB64Bitmap(it) }.getOrNull() ?: portrait }
+        val all = ArrayList<LivenessClient.Frame>()
+        portrait?.let { all.add(LivenessClient.Frame(it, null)) }
+        all.addAll(frames)
+        // SMART FAIL: never POST an empty payload (that's the server 422 "not submitting").
+        // If nothing usable was captured, end gracefully — the host can retry the flow.
+        if (all.isEmpty()) {
+            android.util.Log.w("FacededupLive", "no frames captured → incomplete (recoveries=$recoveries)")
+            finishWith("{\"type\":\"liveness\",\"outcome\":\"incomplete\",\"error\":\"no_capture\"}")
+            return
+        }
         // Freeze the last frame inside the oval so the camera can stop while we decide.
         lastBitmap?.let { bmp ->
             shotView?.apply { setImageBitmap(bmp); visibility = android.view.View.VISIBLE }
@@ -486,13 +513,6 @@ class FacededupActivity : AppCompatActivity() {
         // bottom toast when OFFLINE, where the user genuinely needs to know the result is delayed.
         if (!LivenessClient.isOnline(applicationContext))
             toast?.apply { text = cfg.str("offline_saved"); visibility = android.view.View.VISIBLE }
-        val durationMs = if (captureStartMs > 0) System.currentTimeMillis() - captureStartMs else 0L
-        // Use the SHARPEST frontal frame as the portrait (the image the server scores for
-        // quality + PAD). Falls back to whatever we have if none was captured.
-        bestPortraitBmp?.let { portrait = runCatching { jpegB64Bitmap(it) }.getOrNull() ?: portrait }
-        val all = ArrayList<LivenessClient.Frame>()
-        portrait?.let { all.add(LivenessClient.Frame(it, null)) }
-        all.addAll(frames)
         val bytes = all.sumOf { it.imageB64.length }
         android.util.Log.i("FacededupLive", "SUBMIT base=$base frames=${all.size} bytes=$bytes " +
             "online=${LivenessClient.isOnline(applicationContext)} actions=${liveness.actionKeys()}")
