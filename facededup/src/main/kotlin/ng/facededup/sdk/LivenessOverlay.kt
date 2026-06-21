@@ -35,6 +35,8 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
     private val arc = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE; strokeWidth = dp(7f); strokeCap = Paint.Cap.ROUND
     }
+    // Soft glow around the oval — used for smile/blink (which have no directional arc).
+    private val glow = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND }
     private val arrowBg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#16181C") }
     private val arrowFg = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE; strokeWidth = dp(2.6f); strokeCap = Paint.Cap.ROUND
@@ -58,6 +60,7 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
     private var shownAction: Float = 0f
     var directionDeg: Float? = null            // 0=right,90=up,180=left,270=down; null = no direction
     var present: Boolean = false               // a single face is in frame
+    var glowAction: Boolean = false            // current action is smile/blink → glow the oval
     var success: Boolean = false
     var wrong: Boolean = false
     var diagnostic: String? = null
@@ -90,7 +93,7 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
     fun ovalTopPx(): Float = ovalRect.top
 
     override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
-        val ovw = w * 0.70f                          // big oval — position the face inside it
+        val ovw = w * 0.62f                          // oval — position the face inside it
         val ovh = ovw * 1.30f                        // tall oval (not a circle)
         ccx = w / 2f
         ccy = h * 0.44f
@@ -110,7 +113,7 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
         canvas.drawRoundRect(cardRect, cardCorner, cardCorner, card)         // translucent grey card
         canvas.drawOval(ovalRect, clear)                                    // punch oval camera window
 
-        val g = dp(7f)
+        val g = dp(13f)                              // spaced out from the oval edge
         val arcRect = RectF(ovalRect.left - g, ovalRect.top - g, ovalRect.right + g, ovalRect.bottom + g)
 
         if (success) {
@@ -119,13 +122,21 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
             canvas.drawArc(arcRect, 0f, 360f, false, arc)
             drawTick(canvas)
         } else if (present) {
-            // single directional arc growing with the current action
             val a = shownAction.coerceIn(0f, 1f)
+            // smile/blink have no direction → glow the whole oval, intensifying with progress
+            if (glowAction) {
+                glow.color = successColor
+                glow.strokeWidth = arc.strokeWidth + dp(10f)
+                glow.alpha = (60 + 150 * a).toInt().coerceIn(40, 210)
+                canvas.drawOval(arcRect, glow)
+                glow.alpha = 255
+            }
+            // single progress arc growing with the current action
             val screenCenter = -(directionDeg ?: 90f)   // math→screen; null → top
             val sweep = (24f + 132f * a)                // a calm, growing arc
             arc.color = if (wrong) WRONG else successColor
             canvas.drawArc(arcRect, screenCenter - sweep / 2f, sweep, false, arc)
-            // directional arrow above the circle (only for directional actions)
+            // directional arrow above the oval (only for directional actions)
             directionDeg?.let { drawArrow(canvas, it) }
         }
 

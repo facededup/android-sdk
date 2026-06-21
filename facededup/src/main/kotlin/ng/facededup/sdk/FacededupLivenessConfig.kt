@@ -33,8 +33,9 @@ data class FacededupLivenessConfig(
     val minFaceCoverage: Float = 0.05f,   // face/frame area below this = "move closer"
     val maxFaceCoverage: Float = 0.55f,   // face/frame area above this = "move back"
     /** UI. */
-    val instructionSizeSp: Float = 16f,   // instruction text size (sp) — configurable
-    val ringWidthDp: Float = 9f,
+    val instructionSizeSp: Float = 14f,   // instruction text size (sp) — small by default, configurable
+    val fontAsset: String? = null,        // custom font path under app assets (e.g. "fonts/onset.ttf")
+    val ringWidthDp: Float = 5f,          // progress-arc thickness (thin, calm)
     val ringColor: String? = null,      // hex; default = theme primary / green
     val successColor: String? = null,   // hex; default green
     val scrimColor: String? = null,     // hex (with alpha); default light grey
@@ -62,13 +63,13 @@ data class FacededupLivenessConfig(
         "checking" to "Checking…", "only_one_face" to "Only one face, please",
         "great" to "Great", "cancel" to "Cancel",
         // smart coaching + wait/offline
-        "too_dark" to "A bit dark — find better light",
-        "too_bright" to "Too bright — reduce glare",
+        "too_dark" to "A bit dark, find better light",
+        "too_bright" to "Too bright, reduce glare",
         "move_closer" to "Move a little closer",
         "move_back" to "Move back a little",
         "hold_steady" to "Hold steady",
-        "verifying" to "Hang tight — we're verifying your check…",
-        "offline_saved" to "No internet right now — your check is saved ✓\nYou'll get the result once you're back online.",
+        "verifying" to "Hang tight, we are verifying your check",
+        "offline_saved" to "No internet right now, your check is saved\nYou will get the result once you are back online",
     )
     /** Resolve a UI string: developer override → built-in default → the key. */
     fun str(key: String): String = strings[key] ?: defaults[key] ?: key
@@ -105,6 +106,7 @@ data class FacededupLivenessConfig(
                 minFaceCoverage = f("minFaceCoverage", def.minFaceCoverage),
                 maxFaceCoverage = f("maxFaceCoverage", def.maxFaceCoverage),
                 instructionSizeSp = f("instructionSizeSp", def.instructionSizeSp),
+                fontAsset = str("fontAsset", def.fontAsset),
                 ringWidthDp = f("ringWidthDp", def.ringWidthDp),
                 ringColor = str("ringColor", def.ringColor),
                 successColor = str("successColor", def.successColor),

@@ -141,7 +141,7 @@ class FacededupActivity : AppCompatActivity() {
             text = cfg.str("center_face"); textSize = cfg.instructionSizeSp
             setTextColor(parseColorOr(cfg.pillTextColor, Color.parseColor("#1F2024")))
             gravity = Gravity.CENTER; maxLines = 2
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            applyFont(this)
             setPadding(dp(28), 0, dp(28), 0)
             layoutParams = FrameLayout.LayoutParams(MATCH, WRAP).apply {
                 gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
@@ -150,9 +150,9 @@ class FacededupActivity : AppCompatActivity() {
         title = hint
         // BOTTOM status toast — a white rounded pill (verifying / submitted / offline). Hidden until needed.
         toast = TextView(this).apply {
-            textSize = 16f; setTextColor(Color.parseColor("#1F2024"))
+            textSize = cfg.instructionSizeSp; setTextColor(Color.parseColor("#1F2024"))
             gravity = Gravity.CENTER; maxLines = 3
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            applyFont(this)
             background = GradientDrawable().apply { setColor(Color.WHITE); cornerRadius = dpf(20f) }
             setPadding(dp(24), dp(16), dp(24), dp(16))
             elevation = dpf(8f); visibility = android.view.View.GONE
@@ -177,8 +177,8 @@ class FacededupActivity : AppCompatActivity() {
         if (cfg.showCancel) {
             val cancel = TextView(this).apply {
                 text = cfg.str("cancel"); textSize = 15f
-                setTextColor(parseColorOr(cfg.cancelColor, Color.parseColor("#FFFFFF")))
-                gravity = Gravity.CENTER; setTypeface(typeface, android.graphics.Typeface.BOLD)
+                setTextColor(parseColorOr(cfg.cancelColor, Color.parseColor("#3A3A3A")))
+                gravity = Gravity.CENTER; applyFont(this)
                 setPadding(dp(24), dp(10), dp(24), dp(10))
                 setOnClickListener { cancelFlow() }
                 layoutParams = FrameLayout.LayoutParams(MATCH, WRAP).apply {
@@ -198,6 +198,21 @@ class FacededupActivity : AppCompatActivity() {
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
     private fun dpf(v: Float): Float = v * resources.displayMetrics.density
+
+    /** Custom font (e.g. "Onset"): cfg.fontAsset, else auto-tries assets/fonts/onset.ttf. */
+    private val customFont: android.graphics.Typeface? by lazy {
+        val candidates = listOfNotNull(cfg.fontAsset, "fonts/onset.ttf", "fonts/Onset.ttf", "onset.ttf")
+        for (p in candidates) {
+            val tf = runCatching { android.graphics.Typeface.createFromAsset(assets, p) }.getOrNull()
+            if (tf != null) return@lazy tf
+        }
+        null
+    }
+    /** Apply the custom font (falling back to the system default) at the given style. */
+    private fun applyFont(tv: TextView, style: Int = android.graphics.Typeface.BOLD) {
+        val base = customFont
+        tv.typeface = if (base != null) android.graphics.Typeface.create(base, style) else android.graphics.Typeface.create(tv.typeface, style)
+    }
     private fun parseColorOr(hex: String?, fallback: Int): Int =
         runCatching { hex?.let { Color.parseColor(it) } }.getOrNull() ?: fallback
 
@@ -295,10 +310,14 @@ class FacededupActivity : AppCompatActivity() {
         } else null
         val act = if (present && !finishedNow && !positioning) liveness.subProgress else 0f
         val dir = if (present && !finishedNow && !positioning) liveness.directionDeg else null
+        // Smile / blink have no direction → glow the oval as feedback.
+        val glowAct = present && !finishedNow && !positioning &&
+            (liveness.current == ActiveLiveness.Directive.Smile || liveness.current == ActiveLiveness.Directive.Blink)
         runOnUiThread {
             overlay.present = present
             overlay.wrong = wrong
             overlay.actionProgress = act                  // current action drives the single arc
+            overlay.glowAction = glowAct
             overlay.directionDeg = dir
             overlay.success = finishedNow
             overlay.diagnostic = if (cfg.showDiagnostics) liveness.debugLine() else null
@@ -341,10 +360,10 @@ class FacededupActivity : AppCompatActivity() {
 
     // Corrective nudge when the user moves the opposite way from what's asked.
     private fun wrongHint(): String = when (liveness.current) {
-        ActiveLiveness.Directive.TurnLeft  -> "↩ The other way — turn LEFT"
-        ActiveLiveness.Directive.TurnRight -> "↪ The other way — turn RIGHT"
-        ActiveLiveness.Directive.LookUp    -> "↑ Tilt UP, not down"
-        ActiveLiveness.Directive.LookDown  -> "↓ Tilt DOWN, not up"
+        ActiveLiveness.Directive.TurnLeft  -> "The other way, turn left"
+        ActiveLiveness.Directive.TurnRight -> "The other way, turn right"
+        ActiveLiveness.Directive.LookUp    -> "Tilt up, not down"
+        ActiveLiveness.Directive.LookDown  -> "Tilt down, not up"
         else -> liveness.hint(true)
     }
 

@@ -126,7 +126,7 @@ internal class ActiveLiveness(private val cfg: FacededupLivenessConfig) {
             subProgress = (posStable.toFloat() / posNeeded).coerceIn(0f, 1f)
             if (posStable >= posNeeded) {
                 neutralPitch = if (posPitchN > 0) posPitchSum / posPitchN else pitch
-                positioned = true; subProgress = 0f
+                positioned = true; subProgress = 0f; actionStartMs = System.currentTimeMillis()
             }
             return false
         }
@@ -142,13 +142,22 @@ internal class ActiveLiveness(private val cfg: FacededupLivenessConfig) {
 
         dbgYaw = yaw; dbgPitchDelta = pitchDelta; dbgSmile = smile; dbgEyeOpen = eyeOpen
 
+        // ADAPTIVE thresholds: start at the configured value, then gently relax (down to ~70%)
+        // the longer the user works at the current action — precise users pass instantly;
+        // strugglers still succeed. Keeps the flow forgiving without being trivially spoofable.
+        val k = ease()
+        val turnT  = cfg.turnYawDeg * k
+        val tiltT  = cfg.tiltPitchDeg * k
+        val smileT = cfg.smileThreshold * k
+        val blinkT = (cfg.blinkThreshold / k).coerceAtMost(EYE_OPEN - 0.05f)
+
         when (current) {
-            Directive.TurnLeft  -> { subProgress = (yaw / cfg.turnYawDeg).coerceIn(0f, 1f); directionDeg = 180f }
-            Directive.TurnRight -> { subProgress = (-yaw / cfg.turnYawDeg).coerceIn(0f, 1f); directionDeg = 0f }
-            Directive.LookUp    -> { subProgress = (pitchDelta / cfg.tiltPitchDeg).coerceIn(0f, 1f); directionDeg = 90f }
-            Directive.LookDown  -> { subProgress = (-pitchDelta / cfg.tiltPitchDeg).coerceIn(0f, 1f); directionDeg = 270f }
-            Directive.Smile     -> { subProgress = (smile / cfg.smileThreshold).coerceIn(0f, 1f); directionDeg = null }
-            Directive.Blink     -> { subProgress = ((EYE_OPEN - eyeOpen) / (EYE_OPEN - cfg.blinkThreshold)).coerceIn(0f, 1f); directionDeg = null }
+            Directive.TurnLeft  -> { subProgress = (yaw / turnT).coerceIn(0f, 1f); directionDeg = 180f }
+            Directive.TurnRight -> { subProgress = (-yaw / turnT).coerceIn(0f, 1f); directionDeg = 0f }
+            Directive.LookUp    -> { subProgress = (pitchDelta / tiltT).coerceIn(0f, 1f); directionDeg = 90f }
+            Directive.LookDown  -> { subProgress = (-pitchDelta / tiltT).coerceIn(0f, 1f); directionDeg = 270f }
+            Directive.Smile     -> { subProgress = (smile / smileT).coerceIn(0f, 1f); directionDeg = null }
+            Directive.Blink     -> { subProgress = ((EYE_OPEN - eyeOpen) / (EYE_OPEN - blinkT)).coerceIn(0f, 1f); directionDeg = null }
             else -> { subProgress = 0f; directionDeg = null }
         }
 
@@ -162,16 +171,27 @@ internal class ActiveLiveness(private val cfg: FacededupLivenessConfig) {
         }
 
         val satisfied = when (current) {
-            Directive.TurnLeft  -> sawNeutral && yaw >  cfg.turnYawDeg
-            Directive.TurnRight -> sawNeutral && yaw < -cfg.turnYawDeg
-            Directive.LookUp    -> sawNeutral && pitchDelta >  cfg.tiltPitchDeg
-            Directive.LookDown  -> sawNeutral && pitchDelta < -cfg.tiltPitchDeg
-            Directive.Smile     -> smile > cfg.smileThreshold
-            Directive.Blink     -> sawEyesOpen && eyeOpen < cfg.blinkThreshold
+            Directive.TurnLeft  -> sawNeutral && yaw >  turnT
+            Directive.TurnRight -> sawNeutral && yaw < -turnT
+            Directive.LookUp    -> sawNeutral && pitchDelta >  tiltT
+            Directive.LookDown  -> sawNeutral && pitchDelta < -tiltT
+            Directive.Smile     -> smile > smileT
+            Directive.Blink     -> sawEyesOpen && eyeOpen < blinkT
             else -> false
         }
-        if (satisfied) { index++; sawNeutral = false; sawEyesOpen = false; subProgress = 0f; wrong = false }
+        if (satisfied) {
+            index++; sawNeutral = false; sawEyesOpen = false; subProgress = 0f; wrong = false
+            actionStartMs = System.currentTimeMillis()   // reset the adaptive timer for the next action
+        }
         return satisfied
+    }
+
+    private var actionStartMs = 0L
+    /** Relaxation factor 1.0 → 0.70 over ~6s on the current action (adaptive difficulty). */
+    private fun ease(): Float {
+        if (actionStartMs == 0L) return 1f
+        val t = ((System.currentTimeMillis() - actionStartMs) / 6000f).coerceIn(0f, 1f)
+        return 1f - 0.30f * t
     }
 
     /** One-line live readout for the diagnostic overlay. */
