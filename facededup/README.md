@@ -24,7 +24,7 @@ dependencyResolutionManagement {
     }
 }
 // app/build.gradle.kts
-dependencies { implementation("ng.facededup:facededup:2.0.0-alpha11") }
+dependencies { implementation("ng.facededup:facededup:2.0.0-alpha12") }
 ```
 
 > **Channels:** the native pipeline ships as `2.0.0-alphaNN` and is **opt-in by exact
@@ -56,26 +56,29 @@ verify.launch(FacededupConfig(
 
 1. `FacededupActivity` binds **CameraX** (front camera) + `ImageAnalysis`.
 2. **ML Kit** face detection drives an **active-liveness challenge** (`ActiveLiveness`):
-   a short, randomised sequence of head turns / tilts / smile / blink, each gated on a
-   tracked frontal + resting-pitch baseline (so "look up/down" works with the natural
+   a short, randomised sequence of head turns / tilts / smile / blink, each judged against
+   a tracked frontal + resting-pitch baseline (so "look up/down" works with the natural
    phone-below-face tilt).
 3. Proving frames (a portrait + one per action) POST to `/v1/offline/submit`
    (online → immediate verdict; offline → queued + flushed on reconnect).
 4. The typed result returns via `ActivityResult`.
 
 ### UX (banking-grade)
-- **Clean capture frame** — opaque white surround; only the oval (capture area) shows
-  the camera.
-- **Segmented progress ring** — a single neutral ring split into one segment per
-  challenge; each segment fills green smoothly as that challenge passes (full ring +
-  tick on success). No glow, no pulsing. A wrong move tints the active segment red.
-- **Smart scene coaching** — low-light detection auto-boosts screen brightness (steady,
-  latched — no flicker) and nudges *"find better light"*; framing nudges
-  (*move closer / back*) gate the start under good conditions.
+- **Card layout** — a white surround with a centred translucent-grey card; the camera
+  shows only inside a tall **oval** window (position the face there). Instruction sits in
+  small, configurable text below the oval; "Cancel" at the bottom.
+- **Intelligent oval border** — a full outline tracing the oval: faint/neutral until a
+  face is detected, then a bright green border. A single **progress arc** (starts long,
+  grows to full) rides on top, with a **directional arrow** for turns; **smile/blink glow**
+  the oval (no direction). Full green ring + tick on success; a wrong move shows red.
+- **Adaptive calibration** — each action starts strict, then gently relaxes (to ~70% over
+  ~6s) so precise users pass instantly and strugglers still succeed.
+- **Smart scene coaching (advisory)** — low-light detection auto-boosts screen brightness
+  (steady, latched, no flicker) and nudges *"find better light"* / *"move closer/back"*.
+  These never block the flow — a dark room or large face can't stall it.
 - **Freeze-frame + honest waiting** — on completion the last frame freezes in the oval
-  with *"Hang tight — we're verifying…"*; **offline** shows *"saved ✓ — result once
-  you're back online"*.
-- **Haptics** — a tick per completed action + a success buzz.
+  with a "verifying" message; **offline** shows a "saved, result once you are back online"
+  message. **Haptics**: a tick per completed action + a success buzz.
 
 ## Configure everything (white-label)
 
@@ -84,12 +87,13 @@ pass a `FacededupLivenessConfig` programmatically. Keys:
 
 | Group | Keys |
 |---|---|
-| Challenges | `actions` (empty = random), `sequenceLength`, `turnYawDeg`, `tiltPitchDeg`, `smileThreshold`, `blinkThreshold`, `neutralYawDeg` |
-| Scene quality | `darkLuma` (low-light threshold), `minFaceCoverage`, `maxFaceCoverage` |
-| Ring / colours | `ringWidthDp`, `ringColor`, `successColor`, `scrimColor` |
-| Branding | `pillColor`, `pillTextColor`, `cancelColor`, `showCancel`, `logoAsset` |
+| Challenges | `actions` (empty = random), `sequenceLength`, `turnYawDeg`, `tiltPitchDeg`, `smileThreshold`, `blinkThreshold`, `neutralYawDeg` (thresholds are starting points — adaptive relaxation eases them over time) |
+| Scene quality (advisory) | `darkLuma` (low-light threshold), `minFaceCoverage`, `maxFaceCoverage` |
+| Border / arc colours | `ringWidthDp` (arc/border thickness), `ringColor`, `successColor` (the green border), `scrimColor` (card colour) |
+| Text / font | `instructionSizeSp` (default 14), `fontAsset` (custom font path, e.g. `fonts/onset.ttf`) |
+| Branding | `pillTextColor` (instruction colour), `cancelColor`, `showCancel`, `logoAsset` |
 | Timing | `actionTimeoutMs`, `totalTimeoutMs`, `framesPerAction` |
-| Diagnostics | `showDiagnostics` (live yaw/pitch/smile/eye readout — **off** by default) |
+| Diagnostics | `showDiagnostics` — live yaw/pitch/smile/eye readout **and** a copyable result-JSON panel on completion (**off** by default) |
 | Strings | `strings{}` — override/localise any on-screen copy (see below) |
 
 Overridable string keys: `center_face`, `turn_left`, `turn_right`, `look_up`,
@@ -102,11 +106,16 @@ Overridable string keys: `center_face`, `turn_left`, `turn_right`, `look_up`,
   "sequenceLength": 3,
   "turnYawDeg": 18, "tiltPitchDeg": 12, "smileThreshold": 0.5,
   "darkLuma": 60, "minFaceCoverage": 0.05, "maxFaceCoverage": 0.55,
-  "ringWidthDp": 10, "ringColor": "#1E9C69", "successColor": "#2CC05C",
+  "instructionSizeSp": 14, "fontAsset": "fonts/onset.ttf",
+  "ringWidthDp": 5, "successColor": "#3DDC84", "scrimColor": "#33000000",
   "showDiagnostics": false,
   "strings": { "center_face": "Center your face in the oval" }
 }
 ```
+
+> **Custom font:** drop the `.ttf` in your app's `assets` (e.g. `assets/fonts/onset.ttf`)
+> and set `fontAsset` to its path; the SDK also auto-tries `fonts/onset.ttf` if unset.
+> Falls back to the system font when no file is found.
 
 ## Device attestation (Play Integrity — Annex A3e)
 
