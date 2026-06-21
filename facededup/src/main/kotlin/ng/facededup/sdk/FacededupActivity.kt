@@ -355,8 +355,8 @@ class FacededupActivity : AppCompatActivity() {
                 face?.headEulerAngleY ?: 0f, face?.headEulerAngleX ?: 0f,
                 liveness.current.name, liveness.subProgress * 100)
         } else null
-        if (dbg != null && (frameLog++ % 6 == 0))
-            android.util.Log.i("FacededupLive", "$dbg cov=%.2f cen=$centered wrong=$wrong".format(coverage))
+        if (dbg != null && (frameLog++ % 6 == 0))   // dbg already contains a literal '%' — do NOT re-format it
+            android.util.Log.i("FacededupLive", "$dbg cov=${"%.2f".format(coverage)} cen=$centered wrong=$wrong")
         runOnUiThread {
             overlay.present = present
             overlay.wrong = wrong
