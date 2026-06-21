@@ -24,7 +24,7 @@ dependencyResolutionManagement {
     }
 }
 // app/build.gradle.kts
-dependencies { implementation("ng.facededup:facededup:2.0.0-alpha12") }
+dependencies { implementation("ng.facededup:facededup:2.0.0-alpha13") }
 ```
 
 > **Channels:** the native pipeline ships as `2.0.0-alphaNN` and is **opt-in by exact
@@ -64,21 +64,23 @@ verify.launch(FacededupConfig(
 4. The typed result returns via `ActivityResult`.
 
 ### UX (banking-grade)
-- **Card layout** — a white surround with a centred translucent-grey card; the camera
-  shows only inside a tall **oval** window (position the face there). Instruction sits in
-  small, configurable text below the oval; "Cancel" at the bottom.
-- **Intelligent oval border** — a full outline tracing the oval: faint/neutral until a
-  face is detected, then a bright green border. A single **progress arc** (starts long,
-  grows to full) rides on top, with a **directional arrow** for turns; **smile/blink glow**
-  the oval (no direction). Full green ring + tick on success; a wrong move shows red.
-- **Adaptive calibration** — each action starts strict, then gently relaxes (to ~70% over
-  ~6s) so precise users pass instantly and strugglers still succeed.
+- **Card layout** — a light page with a centred white "stage" card (hosted/web-flow look);
+  the camera shows only inside a smooth **head-shaped** window (position the face there).
+  Instruction sits above the window in configurable text; "Cancel" at the bottom.
+- **Single thick progress arc** — no full ring; one thick green arc on the action side that
+  grows smoothly (eased) with a gentle breathing animation, plus a **dark-navy directional
+  arrow** for turns and a soft **glow** for smile/blink. On success: a filled green check
+  badge + pulsing brand dots while verifying.
+- **Direction-agnostic calibration** — turns/tilts pass on the *magnitude* of head movement
+  (`|yaw|` / `|pitchDelta|`), not its sign, so front-camera mirroring can't make a turn read
+  the wrong way and stall at 0%. The arrow still guides direction. Thresholds also relax
+  adaptively (to ~70% over ~6s) so precise users pass instantly and strugglers still succeed.
 - **Smart scene coaching (advisory)** — low-light detection auto-boosts screen brightness
   (steady, latched, no flicker) and nudges *"find better light"* / *"move closer/back"*.
   These never block the flow — a dark room or large face can't stall it.
-- **Freeze-frame + honest waiting** — on completion the last frame freezes in the oval
+- **Freeze-frame + honest waiting** — on completion the last frame freezes in the window
   with a "verifying" message; **offline** shows a "saved, result once you are back online"
-  message. **Haptics**: a tick per completed action + a success buzz.
+  message. **Haptics**: a buzz per completed challenge + a success double-buzz.
 
 ## Configure everything (white-label)
 
@@ -89,7 +91,7 @@ pass a `FacededupLivenessConfig` programmatically. Keys:
 |---|---|
 | Challenges | `actions` (empty = random), `sequenceLength`, `turnYawDeg`, `tiltPitchDeg`, `smileThreshold`, `blinkThreshold`, `neutralYawDeg` (thresholds are starting points — adaptive relaxation eases them over time) |
 | Scene quality (advisory) | `darkLuma` (low-light threshold), `minFaceCoverage`, `maxFaceCoverage` |
-| Border / arc colours | `ringWidthDp` (arc/border thickness), `ringColor`, `successColor` (the green border), `scrimColor` (card colour) |
+| Arc colours | `ringWidthDp` (arc thickness, default 8), `successColor` (the green arc/check), `scrimColor` (card colour) |
 | Text / font | `instructionSizeSp` (default 14), `fontAsset` (custom font path, e.g. `fonts/onset.ttf`) |
 | Branding | `pillTextColor` (instruction colour), `cancelColor`, `showCancel`, `logoAsset` |
 | Timing | `actionTimeoutMs`, `totalTimeoutMs`, `framesPerAction` |
@@ -107,7 +109,7 @@ Overridable string keys: `center_face`, `turn_left`, `turn_right`, `look_up`,
   "turnYawDeg": 18, "tiltPitchDeg": 12, "smileThreshold": 0.5,
   "darkLuma": 60, "minFaceCoverage": 0.05, "maxFaceCoverage": 0.55,
   "instructionSizeSp": 14, "fontAsset": "fonts/onset.ttf",
-  "ringWidthDp": 5, "successColor": "#3DDC84", "scrimColor": "#33000000",
+  "ringWidthDp": 8, "successColor": "#22A447",
   "showDiagnostics": false,
   "strings": { "center_face": "Center your face in the oval" }
 }
