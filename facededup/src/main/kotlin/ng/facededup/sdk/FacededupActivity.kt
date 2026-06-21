@@ -88,6 +88,7 @@ class FacededupActivity : AppCompatActivity() {
     private var lumaEma = -1f                      // smoothed scene brightness (anti-flicker)
     private var darkRun = 0                        // consecutive dark frames before latching boost
     private var wasWrong = false                   // edge-detect wrong move → buzz once
+    private var frameLog = 0                        // throttle diagnostic logcat
     private val movement by lazy { MovementMonitor(this) }
 
     private val cameraPermission =
@@ -107,6 +108,8 @@ class FacededupActivity : AppCompatActivity() {
         params["color"]?.let { runCatching { primaryColor = Color.parseColor(it) } }
         cfg = FacededupLivenessConfig.load(this)           // developer config (assets/facededup_liveness.json)
         liveness = ActiveLiveness(cfg)
+        android.util.Log.i("FacededupLive", "onCreate base=$base licenseSet=${license.isNotBlank()} " +
+            "consent=$consentId method=$method seq=${cfg.sequenceLength}")
 
         buildUi(params["bg"])
         overlay.applyConfig(cfg.ringWidthDp, primaryColor,
@@ -345,6 +348,15 @@ class FacededupActivity : AppCompatActivity() {
         // Smile / blink have no direction → glow the oval as feedback.
         val glowAct = present && !finishedNow && !positioning &&
             (liveness.current == ActiveLiveness.Directive.Smile || liveness.current == ActiveLiveness.Directive.Blink)
+        // Rich diagnostic: RAW sensor angles (so the device's yaw/pitch SIGN is unambiguous),
+        // whether a face is present + framed in the oval, current step, sub-progress.
+        val dbg = if (cfg.showDiagnostics) {
+            "f=${if (present) 1 else 0} oval=${if (framedOk) 1 else 0} ry=%.0f rx=%.0f [%s] %.0f%%".format(
+                face?.headEulerAngleY ?: 0f, face?.headEulerAngleX ?: 0f,
+                liveness.current.name, liveness.subProgress * 100)
+        } else null
+        if (dbg != null && (frameLog++ % 6 == 0))
+            android.util.Log.i("FacededupLive", "$dbg cov=%.2f cen=$centered wrong=$wrong".format(coverage))
         runOnUiThread {
             overlay.present = present
             overlay.wrong = wrong
@@ -352,7 +364,7 @@ class FacededupActivity : AppCompatActivity() {
             overlay.glowAction = glowAct
             overlay.directionDeg = dir
             overlay.success = finishedNow
-            overlay.diagnostic = if (cfg.showDiagnostics) liveness.debugLine() else null
+            overlay.diagnostic = dbg
             hint.text = when {
                 finishedNow -> cfg.str("great")
                 count > 1 -> cfg.str("only_one_face")
@@ -444,19 +456,24 @@ class FacededupActivity : AppCompatActivity() {
         val all = ArrayList<LivenessClient.Frame>()
         portrait?.let { all.add(LivenessClient.Frame(it, null)) }
         all.addAll(frames)
+        val bytes = all.sumOf { it.imageB64.length }
+        android.util.Log.i("FacededupLive", "SUBMIT base=$base frames=${all.size} bytes=$bytes " +
+            "online=${LivenessClient.isOnline(applicationContext)} actions=${liveness.actionKeys()}")
         Thread {
-            // Anti-fraud metadata: VPN/proxy, device movement/orientation/proximity, battery,
-            // carrier, geolocation (if permitted), attestation chain, capture duration, etc.
-            val metadata = runCatching {
-                DeviceMetadata.collect(applicationContext, durationMs, 0,
-                    "$subject-${System.currentTimeMillis()}", movement.summary())
-            }.getOrNull()
-            val json = LivenessClient.submit(applicationContext, base, license, subject,
-                method, liveness.actionKeys(), all, metadata)
-            // Encrypted liveness-event ingest (best-effort, detached). Fired BEFORE we
-            // hand the result back; failure here never blocks the host's result.
-            ingestEvent(json, metadata, durationMs)
-            runOnUiThread { finishWith(json) }
+            try {
+                val metadata = runCatching {
+                    DeviceMetadata.collect(applicationContext, durationMs, 0,
+                        "$subject-${System.currentTimeMillis()}", movement.summary())
+                }.getOrNull()
+                val json = LivenessClient.submit(applicationContext, base, license, subject,
+                    method, liveness.actionKeys(), all, metadata)
+                android.util.Log.i("FacededupLive", "SUBMIT result: ${json.take(220)}")
+                runCatching { ingestEvent(json, metadata, durationMs) }   // best-effort, never blocks
+                runOnUiThread { finishWith(json) }
+            } catch (e: Throwable) {
+                android.util.Log.e("FacededupLive", "SUBMIT failed", e)
+                runOnUiThread { finishWith("{\"type\":\"liveness\",\"outcome\":\"error\",\"error\":\"submit_failed\"}") }
+            }
         }.start()
     }
 

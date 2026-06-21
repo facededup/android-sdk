@@ -81,8 +81,11 @@ internal object LivenessClient {
             val code = conn.responseCode
             val stream = if (code in 200..299) conn.inputStream else conn.errorStream
             val text = stream?.bufferedReader()?.use { it.readText() }
+            android.util.Log.i("FacededupLive", "POST $url -> HTTP $code (${text?.length ?: 0}B)" +
+                if (code !in 200..299) " body=${text?.take(180)}" else "")
             if (code in 200..299) text else null
         } catch (e: Exception) {
+            android.util.Log.e("FacededupLive", "POST $url failed: ${e.javaClass.simpleName}: ${e.message}")
             null
         } finally {
             conn.disconnect()
