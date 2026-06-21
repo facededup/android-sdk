@@ -261,9 +261,11 @@ class FacededupActivity : AppCompatActivity() {
         val input = InputImage.fromMediaImage(media, rot)
         detector.process(input)
             .addOnSuccessListener { faces ->
-                val face = faces.firstOrNull()
-                onFaces(face, faces.size, proxy, rot, luma, sharp)
+                // Never let a per-frame analysis error kill the session.
+                runCatching { onFaces(faces.firstOrNull(), faces.size, proxy, rot, luma, sharp) }
+                    .onFailure { android.util.Log.e("FacededupLive", "onFaces error", it) }
             }
+            .addOnFailureListener { android.util.Log.w("FacededupLive", "detect failed: ${it.message}") }
             .addOnCompleteListener { proxy.close() }
     }
 
@@ -335,13 +337,14 @@ class FacededupActivity : AppCompatActivity() {
         if (wrong && !wasWrong) haptic("wrong")
         wasWrong = wrong
         val positioning = liveness.current == ActiveLiveness.Directive.Positioning
-        // Coaching only matters while we're still getting the user framed, not mid-action.
+        // Adaptive guidance (positioning only): one specific, prioritised nudge.
         val coachMsg = if (positioning && present) when {
-            tooFar -> cfg.str("move_closer")
             tooClose -> cfg.str("move_back")
-            !centered -> cfg.str("center_face")   // head not in the oval yet
-            dark -> cfg.str("too_dark")
-            else -> null
+            tooFar -> cfg.str("move_closer")
+            !centered -> cfg.str("center_face")                 // head not in the oval yet
+            dark && brightnessBoosted -> cfg.str("increasing_brightness")
+            dark -> cfg.str("too_dark")                         // "move to better lighting"
+            else -> cfg.str("hold_steady")                      // framed + lit → hold while we lock
         } else null
         val act = if (present && !finishedNow && !positioning) liveness.subProgress else 0f
         val dir = if (present && !finishedNow && !positioning) liveness.directionDeg else null
@@ -381,11 +384,18 @@ class FacededupActivity : AppCompatActivity() {
 
     /** Average luminance (0..255) sampled from the YUV Y plane — cheap scene-brightness probe. */
     private fun avgLuma(proxy: ImageProxy): Int = runCatching {
-        val buf = proxy.planes[0].buffer; buf.rewind()
-        val n = buf.remaining(); if (n == 0) return 200
-        var sum = 0L; var cnt = 0; val step = maxOf(1, n / 2000)
-        var i = 0; while (i < n) { sum += (buf.get(i).toInt() and 0xFF); cnt++; i += step }
-        (sum / maxOf(1, cnt)).toInt()
+        val plane = proxy.planes[0]; val buf = plane.buffer
+        val rs = plane.rowStride; val ps = plane.pixelStride
+        val w = proxy.width; val h = proxy.height
+        // Sample ONLY the central region (where an in-oval face sits) — this is FACE-AREA
+        // brightness, not the whole scene, and it's rotation-robust (centre is centre).
+        val x0 = (w * 0.30f).toInt(); val x1 = (w * 0.70f).toInt()
+        val y0 = (h * 0.30f).toInt(); val y1 = (h * 0.70f).toInt()
+        val sx = maxOf(1, (x1 - x0) / 40); val sy = maxOf(1, (y1 - y0) / 40)
+        var sum = 0L; var cnt = 0
+        var y = y0
+        while (y < y1) { var x = x0; while (x < x1) { sum += buf.get(y * rs + x * ps).toInt() and 0xFF; cnt++; x += sx }; y += sy }
+        if (cnt == 0) 200 else (sum / cnt).toInt()
     }.getOrDefault(200)
 
     /** Boost the screen to full brightness ONCE (steady; helps the front camera in low light).

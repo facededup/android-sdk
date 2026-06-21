@@ -63,7 +63,8 @@ data class FacededupLivenessConfig(
         "checking" to "Checking…", "only_one_face" to "Only one face, please",
         "great" to "Great", "cancel" to "Cancel",
         // smart coaching + wait/offline
-        "too_dark" to "A bit dark, find better light",
+        "too_dark" to "Move to better lighting",
+        "increasing_brightness" to "Increasing brightness for better capture",
         "too_bright" to "Too bright, reduce glare",
         "move_closer" to "Move a little closer",
         "move_back" to "Move back a little",

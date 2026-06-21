@@ -26,10 +26,39 @@ internal class ActiveLiveness(private val cfg: FacededupLivenessConfig) {
         LookUp("look_up"), LookDown("look_down"), Smile("smile"), Blink("blink"), Done(null)
     }
 
-    private companion object {
+    internal companion object {
         const val EYE_OPEN = 0.7f   // both-eyes-open baseline before a blink counts
         const val YAW_SIGN = -1f    // flip to +1 if turn left/right are swapped on a device
         const val PITCH_SIGN = 1f   // ML Kit: +headEulerAngleX = looking up
+        const val WRONG_DEG = 6f    // moving past this the wrong way = a clear wrong move
+
+        /**
+         * Pure, testable: is the asked pose met this frame? [yaw]/[pitchDelta] are already
+         * SIGN-CORRECTED (device sign applied). Kept separate so unit tests can prove
+         * TurnLeft / TurnRight are exact opposites (guards against left/right inversion).
+         */
+        fun poseSatisfied(
+            dir: Directive, yaw: Float, pitchDelta: Float, smile: Float, eyeOpen: Float,
+            sawNeutral: Boolean, sawEyesOpen: Boolean,
+            turnT: Float, tiltT: Float, smileT: Float, blinkT: Float,
+        ): Boolean = when (dir) {
+            Directive.TurnLeft  -> sawNeutral && yaw >  turnT
+            Directive.TurnRight -> sawNeutral && yaw < -turnT
+            Directive.LookUp    -> sawNeutral && pitchDelta >  tiltT
+            Directive.LookDown  -> sawNeutral && pitchDelta < -tiltT
+            Directive.Smile     -> smile > smileT
+            Directive.Blink     -> sawEyesOpen && eyeOpen < blinkT
+            else -> false
+        }
+
+        /** Pure, testable: is the user clearly moving the OPPOSITE way to the ask? */
+        fun wrongMove(dir: Directive, yaw: Float, pitchDelta: Float): Boolean = when (dir) {
+            Directive.TurnLeft  -> yaw < -WRONG_DEG
+            Directive.TurnRight -> yaw >  WRONG_DEG
+            Directive.LookUp    -> pitchDelta < -WRONG_DEG
+            Directive.LookDown  -> pitchDelta >  WRONG_DEG
+            else -> false
+        }
     }
 
     private val motion = setOf(Directive.TurnLeft, Directive.TurnRight, Directive.LookUp, Directive.LookDown)
@@ -163,25 +192,11 @@ internal class ActiveLiveness(private val cfg: FacededupLivenessConfig) {
             Directive.Blink     -> { subProgress = ((EYE_OPEN - eyeOpen) / (EYE_OPEN - blinkT)).coerceIn(0f, 1f); directionDeg = null }
             else -> { subProgress = 0f; directionDeg = null }
         }
-        // moving clearly the WRONG way → red ring + corrective nudge
-        wrong = when (current) {
-            Directive.TurnLeft  -> yaw < -6f
-            Directive.TurnRight -> yaw >  6f
-            Directive.LookUp    -> pitchDelta < -6f
-            Directive.LookDown  -> pitchDelta >  6f
-            else -> false
-        }
-
+        // moving clearly the WRONG way → red ring + corrective nudge (pure, tested logic)
+        wrong = wrongMove(current, yaw, pitchDelta)
         // Whether the asked pose is met THIS frame (correct direction + magnitude).
-        val poseMet = when (current) {
-            Directive.TurnLeft  -> sawNeutral && yaw >  turnT
-            Directive.TurnRight -> sawNeutral && yaw < -turnT
-            Directive.LookUp    -> sawNeutral && pitchDelta >  tiltT
-            Directive.LookDown  -> sawNeutral && pitchDelta < -tiltT
-            Directive.Smile -> smile > smileT
-            Directive.Blink -> sawEyesOpen && eyeOpen < blinkT
-            else -> false
-        }
+        val poseMet = poseSatisfied(current, yaw, pitchDelta, smile, eyeOpen,
+            sawNeutral, sawEyesOpen, turnT, tiltT, smileT, blinkT)
         // HOLD-TO-CONFIRM: the pose must be SUSTAINED for a few frames, so a momentary flick
         // or a random head-shake that just brushes the threshold does NOT count as the action.
         if (poseMet && !wrong) holdFrames++ else holdFrames = 0
