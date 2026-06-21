@@ -24,7 +24,7 @@ dependencyResolutionManagement {
     }
 }
 // app/build.gradle.kts
-dependencies { implementation("ng.facededup:facededup:2.0.0-alpha13") }
+dependencies { implementation("ng.facededup:facededup:2.0.0-alpha14") }
 ```
 
 > **Channels:** the native pipeline ships as `2.0.0-alphaNN` and is **opt-in by exact
@@ -60,7 +60,11 @@ verify.launch(FacededupConfig(
    a tracked frontal + resting-pitch baseline (so "look up/down" works with the natural
    phone-below-face tilt).
 3. Proving frames (a portrait + one per action) POST to `/v1/offline/submit`
-   (online → immediate verdict; offline → queued + flushed on reconnect).
+   (online → immediate verdict; offline → queued + flushed on reconnect). Frames are
+   **sharpness-selected** — a per-frame focus measure (Laplacian variance) picks the
+   sharpest, well-lit frontal frame as the portrait and the sharpest shot near each pose,
+   so the server's PAD / image-quality checks see real skin texture (motion-blurred,
+   low-res frames get flagged as synthetic).
 4. The typed result returns via `ActivityResult`.
 
 ### UX (banking-grade)
@@ -142,4 +146,6 @@ movement/proximity, etc. — all best-effort and guarded.
 - Deps: AndroidX, **CameraX** 1.3.4, **ML Kit** face-detection 16.1.7, WorkManager,
   Play Integrity. (APK carries the bundled ML Kit model, ~bigger — can slim with the
   unbundled Play-Services model.)
+- **Capture quality:** analysis runs at 720×1280 and proving frames encode at JPEG q94
+  with sharpness selection — keeps real skin texture for the server's PAD/quality checks.
 - Production: use per-tenant `licenseKey` (not the demo `password`).
