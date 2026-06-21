@@ -81,6 +81,9 @@ class FacededupActivity : AppCompatActivity() {
     private var done = false
     private var captureStartMs = 0L
     private var lastBitmap: Bitmap? = null        // most recent rotated/mirrored frame (for freeze)
+    private var bestPortraitBmp: Bitmap? = null   // sharpest frontal frame → the quality/PAD image
+    private var bestPortraitSharp = 0f
+    private val recentFrames = ArrayDeque<Pair<Bitmap, Float>>()  // ring of recent (frame, sharpness)
     private var brightnessBoosted = false         // whether we forced the screen bright for low light
     private var lumaEma = -1f                      // smoothed scene brightness (anti-flicker)
     private var darkRun = 0                        // consecutive dark frames before latching boost
@@ -230,6 +233,9 @@ class FacededupActivity : AppCompatActivity() {
             val provider = future.get()
             val preview = Preview.Builder().build().also { it.setSurfaceProvider(previewView.surfaceProvider) }
             val analysis = ImageAnalysis.Builder()
+                // Higher analysis resolution → sharper, more-detailed proving frames (the old
+                // 480x640 was too low-detail; the server flagged it as synthetic). ML Kit copes.
+                .setTargetResolution(android.util.Size(720, 1280))
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST).build()
             analysis.setAnalyzer(analysisExec, ::analyze)
             val selector = if (agentMode) CameraSelector.DEFAULT_BACK_CAMERA else CameraSelector.DEFAULT_FRONT_CAMERA
@@ -248,17 +254,18 @@ class FacededupActivity : AppCompatActivity() {
         if (media == null || !capturing) { proxy.close(); return }
         val rot = proxy.imageInfo.rotationDegrees
         val luma = avgLuma(proxy)               // scene brightness 0..255 from the Y plane
+        val sharp = sharpnessY(proxy)           // focus measure (Laplacian variance) — higher = sharper
         val input = InputImage.fromMediaImage(media, rot)
         detector.process(input)
             .addOnSuccessListener { faces ->
                 val face = faces.firstOrNull()
-                onFaces(face, faces.size, proxy, rot, luma)
+                onFaces(face, faces.size, proxy, rot, luma, sharp)
             }
             .addOnCompleteListener { proxy.close() }
     }
 
     // Runs on the ML Kit callback thread; capture reads the proxy (still open here).
-    private fun onFaces(face: Face?, count: Int, proxy: ImageProxy, rot: Int, luma: Int) {
+    private fun onFaces(face: Face?, count: Int, proxy: ImageProxy, rot: Int, luma: Int, sharp: Float) {
         if (done) return
         val mirror = !agentMode
 
@@ -284,18 +291,28 @@ class FacededupActivity : AppCompatActivity() {
         // the flow, or a dark room / large face stalls Positioning forever ("never succeeds").
         // The flow proceeds whenever a single frontal face is held steadily.
 
-        // Capture a frontal portrait once.
-        if (portrait == null && face != null && count == 1 && isFrontal(face))
-            portrait = runCatching { jpegB64(proxy, rot, mirror) }.getOrNull()
-
-        // Keep the latest frame around so we can freeze it while deciding.
-        if (face != null && count == 1)
-            runCatching { toDisplayBitmap(proxy, rot, mirror) }.getOrNull()?.let { lastBitmap = it }
+        // Keep a short ring of recent frames WITH their sharpness, so proving frames pick the
+        // SHARPEST nearby shot (not the motion-blurred one captured the instant a turn lands —
+        // blur made the server read the face as SYNTHETIC and miss live motion).
+        if (face != null && count == 1) {
+            val bmp = runCatching { toDisplayBitmap(proxy, rot, mirror) }.getOrNull()
+            if (bmp != null) {
+                lastBitmap = bmp
+                recentFrames.addLast(bmp to sharp)
+                while (recentFrames.size > 3) recentFrames.removeFirst()   // GC handles evicted refs
+                // sharpest, well-lit FRONTAL frame becomes the portrait (the quality/PAD image)
+                if (!dark && isFrontal(face) && sharp > bestPortraitSharp) {
+                    bestPortraitSharp = sharp; bestPortraitBmp = bmp
+                }
+            }
+        }
 
         val proves = liveness.current.proves
         val satisfied = liveness.onFace(if (count == 1) face else null, true)   // one face = good to proceed
         if (satisfied) {
-            runCatching { jpegB64(proxy, rot, mirror) }.getOrNull()?.let { frames.add(LivenessClient.Frame(it, proves)) }
+            // submit the SHARPEST of the recent frames (all near the satisfying pose)
+            val best = recentFrames.maxByOrNull { it.second }?.first ?: lastBitmap
+            best?.let { runCatching { jpegB64Bitmap(it) }.getOrNull()?.let { b64 -> frames.add(LivenessClient.Frame(b64, proves)) } }
             haptic("action")   // crisp buzz on each completed challenge
         }
         val present = face != null && count == 1
@@ -412,6 +429,9 @@ class FacededupActivity : AppCompatActivity() {
             visibility = android.view.View.VISIBLE
         }
         val durationMs = if (captureStartMs > 0) System.currentTimeMillis() - captureStartMs else 0L
+        // Use the SHARPEST frontal frame as the portrait (the image the server scores for
+        // quality + PAD). Falls back to whatever we have if none was captured.
+        bestPortraitBmp?.let { portrait = runCatching { jpegB64Bitmap(it) }.getOrNull() ?: portrait }
         val all = ArrayList<LivenessClient.Frame>()
         portrait?.let { all.add(LivenessClient.Frame(it, null)) }
         all.addAll(frames)
@@ -450,10 +470,14 @@ class FacededupActivity : AppCompatActivity() {
 
     private fun isFrontal(f: Face) = abs(f.headEulerAngleY) < 10f && abs(f.headEulerAngleX) < 12f
 
-    private fun jpegB64(proxy: ImageProxy, rot: Int, mirror: Boolean): String {
-        val out = toDisplayBitmap(proxy, rot, mirror)
+    private fun jpegB64(proxy: ImageProxy, rot: Int, mirror: Boolean): String =
+        jpegB64Bitmap(toDisplayBitmap(proxy, rot, mirror))
+
+    /** Encode an (already upright/mirrored) bitmap to base64 JPEG. Quality 94 + a higher
+     *  capture resolution keeps real skin texture so the server's PAD/quality checks pass. */
+    private fun jpegB64Bitmap(bmp: Bitmap, quality: Int = 94): String {
         val baos = ByteArrayOutputStream()
-        out.compress(Bitmap.CompressFormat.JPEG, 88, baos)
+        bmp.compress(Bitmap.CompressFormat.JPEG, quality, baos)
         return Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
     }
 
@@ -463,6 +487,28 @@ class FacededupActivity : AppCompatActivity() {
         val m = Matrix(); m.postRotate(rot.toFloat()); if (mirror) m.postScale(-1f, 1f)
         return Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, m, true)
     }
+
+    /** Focus measure: variance of the Laplacian sampled on the Y (luma) plane. Higher = sharper.
+     *  Cheap (downsampled grid) — runs every frame to pick the sharpest proving shot. */
+    private fun sharpnessY(proxy: ImageProxy): Float = runCatching {
+        val plane = proxy.planes[0]; val buf = plane.buffer
+        val rs = plane.rowStride; val ps = plane.pixelStride
+        val w = proxy.width; val h = proxy.height
+        val step = maxOf(2, minOf(w, h) / 180)
+        fun px(x: Int, y: Int) = buf.get(y * rs + x * ps).toInt() and 0xFF
+        var sum = 0.0; var sumSq = 0.0; var n = 0
+        var y = step
+        while (y < h - step) {
+            var x = step
+            while (x < w - step) {
+                val lap = px(x - step, y) + px(x + step, y) + px(x, y - step) + px(x, y + step) - 4 * px(x, y)
+                sum += lap; sumSq += lap.toDouble() * lap; n++
+                x += step
+            }
+            y += step
+        }
+        if (n == 0) 0f else ((sumSq / n) - (sum / n) * (sum / n)).toFloat()
+    }.getOrDefault(0f)
 
     private fun parseParams(query: String): Map<String, String> =
         query.split("&").mapNotNull {

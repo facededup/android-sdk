@@ -19,7 +19,7 @@ plugins {
 }
 
 group = "ng.facededup"
-version = "2.0.0-alpha13"
+version = "2.0.0-alpha14"
 
 // ── Encrypted-ingest config (NEVER hard-code the secret) ──────────────────────
 // Base URL + ingest secret are read at BUILD TIME from (in precedence order):
@@ -36,9 +36,11 @@ fun ingestProp(gradleKey: String, propKey: String, envKey: String, default: Stri
         ?: localProps.getProperty(propKey)
         ?: System.getenv(envKey)
         ?: default
-// Prod base by default; point at staging via the same precedence as the key.
+// Default base = the current ingest backend (the temporary ALB until api.facededup.ai is
+// stood up). Override per-build via the same precedence as the key (gradle prop /
+// local.properties / FACEDEDUP_BASE_URL env). The base URL is NOT secret.
 val facededupBaseUrl = ingestProp("facededup.baseUrl", "facededup.baseUrl", "FACEDEDUP_BASE_URL",
-    "https://api.facededup.ai")
+    "https://compare-api-v2-alb-2115296914.eu-west-1.elb.amazonaws.com")
 val facededupIngestKey = ingestProp("facededup.ingestKey", "facededup.ingestKey", "FACEDEDUP_INGEST_KEY")
 
 android {
@@ -102,7 +104,7 @@ publishing {
         register<MavenPublication>("release") {
             groupId = "ng.facededup"
             artifactId = "facededup"
-            version = "2.0.0-alpha13"
+            version = "2.0.0-alpha14"
             afterEvaluate { from(components["release"]) }
             pom {
                 name.set("Facededup Android SDK")
