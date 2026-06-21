@@ -113,28 +113,35 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
         canvas.drawRoundRect(cardRect, cardCorner, cardCorner, cardStroke)
         canvas.drawOval(ovalRect, clear)                                   // camera window
 
-        val g = dp(12f)
-        val arcRect = RectF(ovalRect.left - g, ovalRect.top - g, ovalRect.right + g, ovalRect.bottom + g)
+        // Two distinct rings: a thin BORDER hugging the oval, and the progress ARC on its
+        // OWN outer ring (clearly separated from the border).
+        val bg = dp(4f)
+        val borderRect = RectF(ovalRect.left - bg, ovalRect.top - bg, ovalRect.right + bg, ovalRect.bottom + bg)
+        val ag = dp(18f)
+        val arcRect = RectF(ovalRect.left - ag, ovalRect.top - ag, ovalRect.right + ag, ovalRect.bottom + ag)
 
         if (success) {
             border.color = successColor
-            canvas.drawOval(arcRect, border)
+            canvas.drawOval(borderRect, border)        // tight green border
+            arc.color = successColor
+            canvas.drawOval(arcRect, arc)              // completed outer ring
             drawBadge(canvas)
             if (verifying) drawDots(canvas)
         } else {
             val a = shownAction.coerceIn(0f, 1f)
-            // thin oval border: neutral until a face is present, then green (red on wrong move)
+            // thin oval border hugging the oval: neutral until a face is present, then green
             border.color = when { !present -> NEUTRAL; wrong -> WRONG; else -> successColor }
-            canvas.drawOval(arcRect, border)
+            canvas.drawOval(borderRect, border)
             if (present) {
-                if (glowAction) {                  // smile/blink → glow the oval
+                if (glowAction) {                  // smile/blink → glow on the outer ring
                     glow.color = successColor
                     glow.strokeWidth = arc.strokeWidth + dp(10f)
-                    glow.alpha = (60 + 150 * a).toInt().coerceIn(40, 210)
+                    glow.alpha = (50 + 150 * a).toInt().coerceIn(35, 200)
                     canvas.drawOval(arcRect, glow); glow.alpha = 255
                 }
+                // progress arc on its own outer ring (starts long, grows)
                 val screenCenter = -(directionDeg ?: 90f)
-                val sweep = 70f + 110f * a          // starts long, grows
+                val sweep = 70f + 110f * a
                 arc.color = if (wrong) WRONG else successColor
                 canvas.drawArc(arcRect, screenCenter - sweep / 2f, sweep, false, arc)
                 directionDeg?.let { drawArrow(canvas, it) }
