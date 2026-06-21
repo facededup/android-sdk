@@ -48,6 +48,7 @@ class MainActivity : AppCompatActivity() {
                         baseUrl = "https://facededup.ai",
                         licenseKey = "fdk_40cT6S_lWEpiCjd22ls8bLsL_YQnZNzq",
                         subjectId = "demo-user-1",
+                        consentId = "demo-consent-001",   // enables encrypted ingest (host's consent record id)
                         // Grouped, typed branding via the new FacededupTheme API.
                         theme = FacededupTheme(
                             primaryColor = "#1E9C69",
