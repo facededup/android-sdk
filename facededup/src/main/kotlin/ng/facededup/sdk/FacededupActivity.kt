@@ -138,7 +138,7 @@ class FacededupActivity : AppCompatActivity() {
         }
         // TOP instruction — bold dark text on the white card (no pill).
         hint = TextView(this).apply {
-            text = cfg.str("center_face"); textSize = 21f
+            text = cfg.str("center_face"); textSize = cfg.instructionSizeSp
             setTextColor(parseColorOr(cfg.pillTextColor, Color.parseColor("#1F2024")))
             gravity = Gravity.CENTER; maxLines = 2
             setTypeface(typeface, android.graphics.Typeface.BOLD)
@@ -264,11 +264,12 @@ class FacededupActivity : AppCompatActivity() {
         } else 0f
         val tooFar = count == 1 && coverage in 0.0001f..cfg.minFaceCoverage
         val tooClose = count == 1 && coverage > cfg.maxFaceCoverage
-        // Good light + sensible distance → safe to lock the resting baseline.
-        val qualityOk = !dark && !tooFar && !tooClose
+        // Light + framing are ADVISORY only (coaching + brightness) — they must NEVER block
+        // the flow, or a dark room / large face stalls Positioning forever ("never succeeds").
+        // The flow proceeds whenever a single frontal face is held steadily.
 
-        // Capture a frontal portrait once (only when well lit + framed).
-        if (portrait == null && face != null && count == 1 && qualityOk && isFrontal(face))
+        // Capture a frontal portrait once.
+        if (portrait == null && face != null && count == 1 && isFrontal(face))
             portrait = runCatching { jpegB64(proxy, rot, mirror) }.getOrNull()
 
         // Keep the latest frame around so we can freeze it while deciding.
@@ -276,7 +277,7 @@ class FacededupActivity : AppCompatActivity() {
             runCatching { toDisplayBitmap(proxy, rot, mirror) }.getOrNull()?.let { lastBitmap = it }
 
         val proves = liveness.current.proves
-        val satisfied = liveness.onFace(if (count == 1) face else null, qualityOk)   // require exactly one good face
+        val satisfied = liveness.onFace(if (count == 1) face else null, true)   // one face = good to proceed
         if (satisfied) {
             runCatching { jpegB64(proxy, rot, mirror) }.getOrNull()?.let { frames.add(LivenessClient.Frame(it, proves)) }
             vibrate(40)   // SHAP — haptic confirm on each completed action
@@ -446,7 +447,59 @@ class FacededupActivity : AppCompatActivity() {
         FacededupResultHolder.json = json
         val fallback = if (json.length <= 256 * 1024) json else "{\"type\":\"liveness\"}"
         setResult(RESULT_OK, Intent().putExtra(EXTRA_RESULT, fallback))
-        finish()
+        // Debug: when diagnostics are on, show the full result JSON with a Copy button
+        // BEFORE returning to the host, so it can be inspected/copied.
+        if (cfg.showDiagnostics) runOnUiThread { showResultDebug(json) } else finish()
+    }
+
+    /** Full-screen JSON viewer with a Copy button (debug only). "Done" returns to the host. */
+    private fun showResultDebug(json: String) {
+        val content = findViewById<android.widget.FrameLayout>(android.R.id.content) ?: return finish()
+        val pretty = runCatching { org.json.JSONObject(json).toString(2) }.getOrDefault(json)
+        val scrim = FrameLayout(this).apply {
+            setBackgroundColor(Color.parseColor("#CC000000"))
+            layoutParams = FrameLayout.LayoutParams(MATCH, MATCH)
+        }
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = GradientDrawable().apply { setColor(Color.WHITE); cornerRadius = dpf(16f) }
+            setPadding(dp(16), dp(16), dp(16), dp(16))
+            layoutParams = FrameLayout.LayoutParams(MATCH, MATCH).apply {
+                setMargins(dp(16), dp(48), dp(16), dp(32)); gravity = Gravity.CENTER
+            }
+        }
+        val header = TextView(this).apply {
+            text = "Result JSON (debug)"; textSize = 16f; setTextColor(Color.parseColor("#1F2024"))
+            setTypeface(typeface, android.graphics.Typeface.BOLD); setPadding(0, 0, 0, dp(10))
+        }
+        val tv = TextView(this).apply {
+            text = pretty; textSize = 12f; setTextColor(Color.parseColor("#222222"))
+            typeface = android.graphics.Typeface.MONOSPACE; setTextIsSelectable(true)
+        }
+        val scroll = android.widget.ScrollView(this).apply {
+            addView(tv); layoutParams = LinearLayout.LayoutParams(MATCH, 0, 1f)
+        }
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(12), 0, 0)
+        }
+        val copy = android.widget.Button(this).apply {
+            text = "Copy JSON"
+            setOnClickListener {
+                val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                cm.setPrimaryClip(android.content.ClipData.newPlainText("facededup_result", json))
+                android.widget.Toast.makeText(this@FacededupActivity, "Copied", android.widget.Toast.LENGTH_SHORT).show()
+            }
+            layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f).apply { rightMargin = dp(8) }
+        }
+        val doneBtn = android.widget.Button(this).apply {
+            text = "Done"
+            setOnClickListener { finish() }
+            layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f)
+        }
+        row.addView(copy); row.addView(doneBtn)
+        panel.addView(header); panel.addView(scroll); panel.addView(row)
+        scrim.addView(panel)
+        content.addView(scrim)
     }
 
     override fun onDestroy() {

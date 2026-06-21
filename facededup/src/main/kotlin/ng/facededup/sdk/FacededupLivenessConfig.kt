@@ -33,6 +33,7 @@ data class FacededupLivenessConfig(
     val minFaceCoverage: Float = 0.05f,   // face/frame area below this = "move closer"
     val maxFaceCoverage: Float = 0.55f,   // face/frame area above this = "move back"
     /** UI. */
+    val instructionSizeSp: Float = 16f,   // instruction text size (sp) — configurable
     val ringWidthDp: Float = 9f,
     val ringColor: String? = null,      // hex; default = theme primary / green
     val successColor: String? = null,   // hex; default green
@@ -103,6 +104,7 @@ data class FacededupLivenessConfig(
                 darkLuma = f("darkLuma", def.darkLuma),
                 minFaceCoverage = f("minFaceCoverage", def.minFaceCoverage),
                 maxFaceCoverage = f("maxFaceCoverage", def.maxFaceCoverage),
+                instructionSizeSp = f("instructionSizeSp", def.instructionSizeSp),
                 ringWidthDp = f("ringWidthDp", def.ringWidthDp),
                 ringColor = str("ringColor", def.ringColor),
                 successColor = str("successColor", def.successColor),

@@ -27,8 +27,10 @@ import android.view.animation.LinearInterpolator
  */
 internal class LivenessOverlay(ctx: Context) : View(ctx) {
 
-    private val dim = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#22000000") }
-    private val card = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+    // Opaque WHITE surround (hides the camera everywhere except the oval).
+    private val surround = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+    // The card panel — a dark, translucent grey over the white surround (configurable).
+    private val card = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#33000000") }
     private val clear = Paint(Paint.ANTI_ALIAS_FLAG).apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR) }
     private val arc = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE; strokeWidth = dp(7f); strokeCap = Paint.Cap.ROUND
@@ -43,7 +45,7 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
         strokeJoin = Paint.Join.ROUND; color = GREEN
     }
     private val diag = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#FFFFFF"); textAlign = Paint.Align.CENTER; textSize = dp(13f)
+        color = Color.parseColor("#444444"); textAlign = Paint.Align.CENTER; textSize = dp(13f)
     }
 
     private val cardRect = RectF()
@@ -73,7 +75,7 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
         val px = dp(ringWidthDp)
         arc.strokeWidth = px; tick.strokeWidth = px
         successColor = success
-        runCatching { scrimHex?.let { dim.color = Color.parseColor(it) } }
+        runCatching { scrimHex?.let { card.color = Color.parseColor(it) } }
     }
     private var successColor = GREEN
 
@@ -88,8 +90,8 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
     fun ovalTopPx(): Float = ovalRect.top
 
     override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
-        val ovw = w * 0.52f
-        val ovh = ovw * 1.34f                       // tall oval (not a circle)
+        val ovw = w * 0.70f                          // big oval — position the face inside it
+        val ovh = ovw * 1.30f                        // tall oval (not a circle)
         ccx = w / 2f
         ccy = h * 0.44f
         ovalRect.set(ccx - ovw / 2, ccy - ovh / 2, ccx + ovw / 2, ccy + ovh / 2)
@@ -104,9 +106,9 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
         if (kotlin.math.abs((if (success) 1f else actionProgress) - shownAction) < 0.002f)
             shownAction = if (success) 1f else actionProgress
 
-        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), dim)    // dim the camera bg
-        canvas.drawRoundRect(cardRect, cardCorner, cardCorner, card)       // white card
-        canvas.drawOval(ovalRect, clear)                                  // punch oval camera window
+        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), surround)  // white surround
+        canvas.drawRoundRect(cardRect, cardCorner, cardCorner, card)         // translucent grey card
+        canvas.drawOval(ovalRect, clear)                                    // punch oval camera window
 
         val g = dp(7f)
         val arcRect = RectF(ovalRect.left - g, ovalRect.top - g, ovalRect.right + g, ovalRect.bottom + g)
