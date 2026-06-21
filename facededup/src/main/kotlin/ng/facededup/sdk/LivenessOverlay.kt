@@ -35,6 +35,10 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
     private val arc = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE; strokeWidth = dp(7f); strokeCap = Paint.Cap.ROUND
     }
+    // Full oval outline — the green "intelligent" border tracing the whole oval.
+    private val border = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeWidth = dp(5f); strokeCap = Paint.Cap.ROUND
+    }
     // Soft glow around the oval — used for smile/blink (which have no directional arc).
     private val glow = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND }
     private val arrowBg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#16181C") }
@@ -76,7 +80,7 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
     /** Arc thickness + success colour + dim/scrim colour (ring param kept for compat). */
     fun applyConfig(ringWidthDp: Float, ring: Int, success: Int, scrimHex: String?) {
         val px = dp(ringWidthDp)
-        arc.strokeWidth = px; tick.strokeWidth = px
+        arc.strokeWidth = px; tick.strokeWidth = px; border.strokeWidth = px
         successColor = success
         runCatching { scrimHex?.let { card.color = Color.parseColor(it) } }
     }
@@ -121,23 +125,31 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
             arc.color = successColor
             canvas.drawArc(arcRect, 0f, 360f, false, arc)
             drawTick(canvas)
-        } else if (present) {
+        } else {
             val a = shownAction.coerceIn(0f, 1f)
-            // smile/blink have no direction → glow the whole oval, intensifying with progress
-            if (glowAction) {
-                glow.color = successColor
-                glow.strokeWidth = arc.strokeWidth + dp(10f)
-                glow.alpha = (60 + 150 * a).toInt().coerceIn(40, 210)
-                canvas.drawOval(arcRect, glow)
-                glow.alpha = 255
+            // FULL oval border tracing the whole oval — neutral until a face is present,
+            // then a bright green "intelligent" border (matches the design reference).
+            border.color = when { !present -> NEUTRAL; wrong -> WRONG; else -> successColor }
+            border.alpha = if (present && !wrong) 165 else 255
+            canvas.drawOval(arcRect, border); border.alpha = 255
+
+            if (present) {
+                // smile/blink have no direction → glow the whole oval, intensifying with progress
+                if (glowAction) {
+                    glow.color = successColor
+                    glow.strokeWidth = arc.strokeWidth + dp(10f)
+                    glow.alpha = (60 + 150 * a).toInt().coerceIn(40, 210)
+                    canvas.drawOval(arcRect, glow)
+                    glow.alpha = 255
+                }
+                // bright progress arc over the border — starts a bit longer, grows to full
+                val screenCenter = -(directionDeg ?: 90f)   // math→screen; null → top
+                val sweep = (70f + 110f * a)                // longer at start, grows
+                arc.color = if (wrong) WRONG else successColor
+                canvas.drawArc(arcRect, screenCenter - sweep / 2f, sweep, false, arc)
+                // directional arrow above the oval (only for directional actions)
+                directionDeg?.let { drawArrow(canvas, it) }
             }
-            // single progress arc growing with the current action
-            val screenCenter = -(directionDeg ?: 90f)   // math→screen; null → top
-            val sweep = (24f + 132f * a)                // a calm, growing arc
-            arc.color = if (wrong) WRONG else successColor
-            canvas.drawArc(arcRect, screenCenter - sweep / 2f, sweep, false, arc)
-            // directional arrow above the oval (only for directional actions)
-            directionDeg?.let { drawArrow(canvas, it) }
         }
 
         diagnostic?.let { canvas.drawText(it, width / 2f, height - dp(40f), diag) }
@@ -167,7 +179,8 @@ internal class LivenessOverlay(ctx: Context) : View(ctx) {
     private fun dp(v: Float) = v * resources.displayMetrics.density
 
     companion object {
-        val GREEN: Int = Color.parseColor("#7BCB7E")           // soft, calm green (per reference)
+        val GREEN: Int = Color.parseColor("#3DDC84")           // bright, confident green border (per reference)
+        private val NEUTRAL: Int = Color.parseColor("#D7DBE0") // faint outline before a face is detected
         private val WRONG: Int = Color.parseColor("#E24B4A")
     }
 }
