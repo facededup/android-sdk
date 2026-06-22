@@ -40,6 +40,15 @@ internal object DeviceSignals {
         dev("build_fingerprint", Build.FINGERPRINT)
         dev("system_architecture", Build.SUPPORTED_ABIS.firstOrNull())
 
+        // --- Stable, app-scoped device id (for device-farm velocity). ANDROID_ID is
+        // unique per app-signing-key per device on Android 8+ (not cross-app trackable). ---
+        runCatching {
+            @android.annotation.SuppressLint("HardwareIds")
+            val aid = android.provider.Settings.Secure.getString(
+                ctx.contentResolver, android.provider.Settings.Secure.ANDROID_ID)
+            if (!aid.isNullOrBlank()) dev("device_id", aid)
+        }
+
         // --- App identity + integrity ---
         runCatching {
             dev("package_name", ctx.packageName)
