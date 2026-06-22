@@ -13,7 +13,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-title" content="Facededup" />
   <style>
-    /* Brand font — Circular Std (self-hosted, licensed). */
+    /* Brand font, Circular Std (self-hosted, licensed). */
     @font-face{ font-family:'Circular Std'; font-style:normal; font-weight:400; font-display:swap;
       src:url('./assets/CircularStd-Book.woff2') format('woff2'); }
     @font-face{ font-family:'Circular Std'; font-style:normal; font-weight:500 600; font-display:swap;
@@ -58,12 +58,18 @@
            border:2px solid #e6eaed; background:#c9ced2; transition:border-color .2s ease, box-shadow .15s ease; }
     .oval video{ width:100%; height:100%; object-fit:cover; transform:scaleX(-1); }
     /* Suppress the native WebView/WebKit media play-button overlay that paints a
-       big ▶ over the <video> before playback "starts" — our camera is a live
+       big ▶ over the <video> before playback "starts", our camera is a live
        stream with no controls, so this control must never show. */
     video::-webkit-media-controls,
+    video::-webkit-media-controls-enclosure,
+    video::-webkit-media-controls-overlay-enclosure,
     video::-webkit-media-controls-overlay-play-button,
     video::-webkit-media-controls-start-playback-button,
-    video::-webkit-media-controls-panel{ display:none !important; -webkit-appearance:none; }
+    video::-webkit-media-controls-play-button,
+    video::-webkit-media-controls-panel{
+      display:none !important; opacity:0 !important; width:0 !important; height:0 !important;
+      -webkit-appearance:none !important; appearance:none !important; pointer-events:none !important; }
+    #cam{ pointer-events:none; }   /* no tap target -> no play overlay */
     .oval .shot{ position:absolute; inset:0; width:100%; height:100%; object-fit:cover; display:none; border-radius:inherit; }
     .oval .shot.show{ display:block; }   /* frozen captured photo on the result */
     /* prompt above the circle + directional arrow (reference style) */
@@ -73,33 +79,7 @@
            display:grid; place-items:center; margin:10px auto 0; transition:transform .2s ease; }
     .ptop .arrow svg{ width:22px; height:22px; color:#fff; }
     .ptop .arrow.hide{ display:none; }
-    /* DEMONSTRATE the motion: the arrow's inner glyph nudges in the direction the user
-       must move (the container is rotated per-action, so this local "up" nudge points
-       the right way for turn/look up/down). Shows users HOW to do the action. */
-    .ptop .arrow.demo svg{ animation: fdkNudge 1.1s ease-in-out infinite; }
-    @keyframes fdkNudge{ 0%,100%{ transform:translateY(3px); opacity:.55 } 50%{ transform:translateY(-5px); opacity:1 } }
-    @media (prefers-reduced-motion: reduce){ .ptop .arrow.demo svg{ animation:none } }
     .hint{ text-align:center; color:var(--ink); font-size:19px; font-weight:700; margin-top:14px; min-height:24px; }
-    /* Animated intro overlay (shown over the stage during camera warm-up). */
-    #intro{ position:absolute; inset:0; z-index:40; display:none; align-items:center; justify-content:center;
-            background:var(--bg, #fff); }
-    #intro.show{ display:flex; animation:introOut .4s ease forwards 1.9s; }
-    .intro-card{ text-align:center; padding:24px; max-width:340px; }
-    .intro-title{ font-size:26px; font-weight:800; color:var(--ink); margin-bottom:18px; }
-    .intro-chips{ display:flex; gap:14px; justify-content:center; margin-bottom:18px; }
-    .ichip{ display:flex; flex-direction:column; align-items:center; gap:6px; opacity:0;
-            animation:introChip .5s ease forwards var(--d), chipBob 1.2s ease-in-out infinite calc(var(--d) + .5s); }
-    .ichip .ig{ width:60px; height:60px; border-radius:16px; background:var(--accent,#0f585b); color:#fff;
-                font-size:28px; display:grid; place-items:center; }
-    .ichip .il{ font-size:13px; font-weight:700; color:var(--ink); }
-    .intro-sub{ font-size:15px; color:var(--text-dim,#5b6b6b); line-height:1.4; }
-    .intro-bar{ margin:18px auto 0; width:140px; height:4px; border-radius:4px; background:rgba(0,0,0,.08); overflow:hidden; }
-    .intro-bar i{ display:block; height:100%; width:0; background:var(--accent,#0f585b); animation:introBar 1.9s linear forwards; }
-    @keyframes introChip{ to{ opacity:1; transform:translateY(0) } from{ opacity:0; transform:translateY(8px) } }
-    @keyframes chipBob{ 0%,100%{ transform:translateY(0) } 50%{ transform:translateY(-5px) } }
-    @keyframes introBar{ to{ width:100% } }
-    @keyframes introOut{ to{ opacity:0; visibility:hidden } }
-    @media (prefers-reduced-motion: reduce){ .ichip{ animation:introChip .5s ease forwards var(--d) } }
     /* bottom guide: pulsing dots that keep moving while a check is in progress */
     .guide{ display:flex; justify-content:center; gap:8px; margin-top:14px; min-height:12px; }
     .guide i{ width:9px; height:9px; border-radius:50%; background:var(--brand); opacity:.3;
@@ -118,10 +98,6 @@
       background:var(--brand-soft); display:flex; align-items:center; justify-content:center;
       border:1px solid #d6e4e4; }
     .micmeter.heard{ background:#dcfce7; border-color:#bbf7d0; }
-    .micmeter.quiet{ background:#fef3c7; border-color:#fde68a; }
-    .micmeter.quiet .mm-fill{ background:linear-gradient(90deg, rgba(217,119,6,.22), rgba(245,158,11,.34)); }
-    .micmeter.quiet .mm-eq i{ background:#d97706; }
-    .micmeter.quiet .mm-text{ color:#b45309; }
     .mm-fill{ position:absolute; left:0; top:0; bottom:0; width:0%;
       background:linear-gradient(90deg, rgba(15,88,91,.30), rgba(42,143,134,.42));
       transition:width .07s linear; }
@@ -429,7 +405,7 @@
 
   <div class="topts" id="topts" style="display:none">
     <div class="topt-row">
-      <div class="topt-l"><b>Liveness strictness</b><small id="strictHint">Lenient — quick, easiest to pass.</small></div>
+      <div class="topt-l"><b>Liveness strictness</b><small id="strictHint">Lenient, quick, easiest to pass.</small></div>
       <div class="seg" id="strictSeg">
         <button type="button" data-s="lenient" class="on">Lenient</button>
         <button type="button" data-s="standard">Standard</button>
@@ -437,7 +413,7 @@
       </div>
     </div>
     <div class="topt-row">
-      <div class="topt-l"><b>Liveness method</b><small id="methodHint">Motion — turn your head to the prompts.</small></div>
+      <div class="topt-l"><b>Liveness method</b><small id="methodHint">Motion, turn your head to the prompts.</small></div>
       <div class="seg" id="methodSeg">
         <button type="button" data-m="face_liveness" class="on">Motion</button>
         <button type="button" data-m="face_number">Read numbers</button>
@@ -499,7 +475,7 @@
     </div>
     <div class="select" id="ctryList"></div>
     <p class="ctry-hint" id="ctryHint" style="display:none">Not here? Type to search all 54 African countries.</p>
-    <p class="ctry-empty" id="ctryEmpty" style="display:none">No match — try another spelling.</p>
+    <p class="ctry-empty" id="ctryEmpty" style="display:none">No match, try another spelling.</p>
   </div>
 
   <!-- Select ID kind -->
@@ -550,7 +526,7 @@
     <div class="doc-retake" id="docRetake" style="display:none">
       <button type="button" class="doc-link" id="docRetakeBtn">↻ Retake photo</button>
     </div>
-    <label class="doc-mrz-label">MRZ — the 2 lines of <code>&lt;&lt;&lt;</code> at the bottom</label>
+    <label class="doc-mrz-label">MRZ, the 2 lines of <code>&lt;&lt;&lt;</code> at the bottom</label>
     <textarea id="docMrzInput" class="doc-mrz" rows="3" spellcheck="false" autocapitalize="characters"
       placeholder="P&lt;UTOERIKSSON&lt;&lt;ANNA&lt;MARIA&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&#10;L898902C36UTO7408122F1204159ZE184226B&lt;&lt;&lt;&lt;&lt;10"></textarea>
     <p class="idhint" id="docErr"></p>
@@ -575,7 +551,7 @@
       <p class="addr-map-by">Map data © OpenStreetMap</p>
     </div>
     <input id="addrLandmark" class="idinput" type="text" autocomplete="off"
-      placeholder="Nearby landmark — e.g. behind Mobil filling station" style="margin-top:10px" />
+      placeholder="Nearby landmark, e.g. behind Mobil filling station" style="margin-top:10px" />
     <div id="addrChips" class="addr-chips" style="display:none"></div>
     <button type="button" class="locbtn" id="addrLoc">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s7-5.5 7-11a7 7 0 0 0-14 0c0 5.5 7 11 7 11z"/><circle cx="12" cy="10" r="2.5"/></svg>
@@ -595,7 +571,7 @@
   <div class="stage" id="consent" style="display:none">
     <div class="topbar"><button class="bk" id="consentBack" aria-label="Back"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 19l-7-7 7-7"/></svg></button></div>
     <h2 class="cs-title">Verify your identity</h2>
-    <p class="cs-sub">You'll take a quick selfie to confirm you're the owner of this identity — processed securely by Facededup (NDPA-aligned).</p>
+    <p class="cs-sub">You'll take a quick selfie to confirm you're the owner of this identity, processed securely by Facededup (NDPA-aligned).</p>
     <div class="cs-illus" aria-hidden="true">
       <video class="cs-vid" autoplay loop muted playsinline preload="auto"
              poster="./assets/face-anim-poster.jpg">
@@ -611,21 +587,7 @@
   </div>
 
   <div class="stage" id="stage" style="display:none">
-    <!-- Brief animated "what you'll do" intro — shown WHILE the camera warms up (adds no
-         real delay), auto-dismisses, tap to skip. Disable with ?intro=0. -->
-    <div id="intro" aria-hidden="true">
-      <div class="intro-card">
-        <div class="intro-title">Quick face check</div>
-        <div class="intro-chips">
-          <div class="ichip" style="--d:0s"><span class="ig">↔️</span><span class="il">Turn</span></div>
-          <div class="ichip" style="--d:.5s"><span class="ig">↕️</span><span class="il">Look</span></div>
-          <div class="ichip" style="--d:1s"><span class="ig">😊</span><span class="il">Blink/Smile</span></div>
-        </div>
-        <div class="intro-sub">Keep your face in the oval and follow the prompts.</div>
-        <div class="intro-bar"><i></i></div>
-      </div>
-    </div>
-    <div class="topbar"><button class="bk" id="back" aria-label="Back"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 19l-7-7 7-7"/></svg></button></div>
+    <div class="topbar"></div>
     <div class="ptop">
       <div class="label" id="p-label">Ready when you are</div>
       <div class="arrow hide" id="p-arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V6"/><path d="M6 12l6-6 6 6"/></svg></div>
@@ -640,10 +602,7 @@
     <div class="pbar-wrap" id="pbar-wrap" style="display:none"><div class="pbar" id="pbar"></div></div>
     <div class="guide" id="guide" style="display:none"><i></i><i></i><i></i></div>
     <div class="controls">
-      <!-- Hidden by default: the flow auto-starts (runFlow), so this button is never
-           the initial entry — it only reappears as "Retry" after a failure (showRetry).
-           Keeping it hidden avoids a flash during instant camera reveal. -->
-      <button id="start" style="display:none">Start liveness check</button>
+      <button id="start">Start liveness check</button>
       <div class="micmeter" id="micmeter" style="display:none" role="status" aria-live="polite">
         <div class="mm-fill" id="mm-fill"></div>
         <div class="mm-eq" id="mm-eq"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
@@ -661,7 +620,7 @@
 
 <script type="module">
   import { LivenessClient, collectDeviceContext } from "/sdk/index.js";
-  // Heavy MediaPipe lib + 9MB WASM come from jsdelivr — a fast global CDN (African
+  // Heavy MediaPipe lib + 9MB WASM come from jsdelivr, a fast global CDN (African
   // edges) that MediaPipe officially uses; raw S3 (London) was too slow from .ng and
   // Lambda can't serve the 9MB wasm (6MB cap -> 500). Our public S3 is the FALLBACK.
   const MP_CDN = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
@@ -669,8 +628,8 @@
   const MP_LIB = MP_CDN;
   const MP_WASM = MP_CDN + "/wasm";
 
-  // CAMERA ON LAUNCH: reveal the verification screen INSTANTLY — before config.json
-  // even loads — for any SDK / default (liveness) launch, so there is NO blank wait.
+  // CAMERA ON LAUNCH: reveal the verification screen INSTANTLY, before config.json
+  // even loads, for any SDK / default (liveness) launch, so there is NO blank wait.
   // Pure DOM, guarded; the real flow (getUserMedia) starts right after boot. The
   // chooser (?flow=select) and other explicit flows are left alone.
   try{
@@ -697,7 +656,7 @@
   // missing key falls back to the default below.
   const DEFAULT_CONFIG = {
     api:      { baseUrl: "" },                       // override the API origin (else this page's origin)
-    behavior: { flow: "liveness",                    // DEFAULT = straight to camera. The "select" chooser menu is opt-in only (?flow=select) — SDK launches never want it.
+    behavior: { flow: "liveness",                    // DEFAULT = straight to camera. The "select" chooser menu is opt-in only (?flow=select), SDK launches never want it.
                 method: "face_liveness",             // "face_liveness" | "face_number"
                 agentMode: false,                    // true = rear camera (agent points it at the customer)
                 strictness: "lenient" },             // "lenient" | "standard" | "strict"
@@ -765,7 +724,7 @@
   const _candBase = CONFIG.api.baseUrl || window.FACEDEDUP_API_BASE || location.origin;
   const API_BASE = (_allowedBase(_candBase) ? _candBase : location.origin).replace(/\/+$/, "");
   // Native app serves this page from the APK (instant) but the API lives on the
-  // gated cloud — when the host injects window.__API_AUTH, attach it to API calls.
+  // gated cloud, when the host injects window.__API_AUTH, attach it to API calls.
   // Per-tenant license key (fdk_…): native host injects window.__LICENSE_KEY, or it
   // comes via ?license= / config. Sent as X-License-Key on every API call so the SDK
   // authenticates + is scoped to its tenant (the production path; demo password still
@@ -785,7 +744,7 @@
 
   // Client-diagnostics beacon: forward errors + device info to the server so
   // WebView-specific failures (esp. iOS MediaPipe load) can be diagnosed from
-  // CloudWatch without a tethered device. No PII / no images — error strings only.
+  // CloudWatch without a tethered device. No PII / no images, error strings only.
   // iOS WKWebView loads the MediaPipe engine fine, but detectForVideo INFERENCE
   // hangs the (single) main thread on many iOS GL/WASM stacks → the UI freezes on
   // "Getting ready…". The real liveness is server-side, so on iOS we skip on-device
@@ -815,27 +774,41 @@
     (e.message||"")+" @ "+((e.filename||"").split("/").pop())+":"+(e.lineno||"")));
   window.addEventListener("unhandledrejection", e=> clientLog("unhandledrejection","error",
     String((e.reason&&(e.reason.stack||e.reason.message))||e.reason)));
-  const DEMO_BUILD = "2026-06-18-focus-sharp-5";   // bump each demo deploy -> proves which build a device actually runs
-  // SECURITY (VAPT F3): never log the license key — redact it from the query string.
+  const DEMO_BUILD = "2026-06-22-ios-bright-fix-1";   // bump each demo deploy -> proves which build a device actually runs
+  // SECURITY (VAPT F3): never log the license key, redact it from the query string.
   const _safeSearch = (location.search||"").replace(/(license|apiBase)=[^&]*/gi, "$1=REDACTED").slice(0,200);
   clientLog("session","info","demo loaded "+DEMO_BUILD, {build: DEMO_BUILD, search:_safeSearch});
+  // Build is recorded in the clientLog beacon above (and DEMO_BUILD) for diagnostics;
+  // the on-screen build badge is OPT-IN now — add ?build=1 to show it.
+  try{
+    if(/[?&]build=1/.test(location.search)){
+      const _b=document.createElement("div"); _b.id="fdkBuild";
+      _b.textContent="flow "+DEMO_BUILD;
+      _b.style.cssText="position:fixed;left:0;right:0;bottom:0;z-index:99999;text-align:center;"
+        +"font:600 10px/1.6 system-ui,sans-serif;color:#9aa4ad;background:rgba(255,255,255,.55);"
+        +"letter-spacing:.3px;pointer-events:none;padding:1px 0;";
+      const _add=()=>{ if(document.body && !document.getElementById("fdkBuild")) document.body.appendChild(_b); };
+      if(document.body) _add(); else document.addEventListener("DOMContentLoaded", _add);
+    }
+  }catch(_e){}
   // Last verification's shaped frames (selfie + 4-8 liveness), carried to the
   // native host on EVERY result (liveness / enroll / authenticate) so the SDK
   // exposes them. Set at the result merge point from the verify result.
   let lastShapedImages = { selfie_image: null, liveliness_images: [] };
+  let lastDeviceContext = null;   // device + network signals collected this session (echoed in the result JSON)
   // Offline = no network, or a fetch that failed to reach the server.
   function isOffline(e){ const m=String((e&&e.message)||e||"");
     return (navigator.onLine===false) || /Failed to fetch|NetworkError|net::ERR|Load failed|ENOTFOUND|ECONNREFUSED/i.test(m); }
-  // Client-generated liveness challenge — lets the challenge run fully on-device
+  // Client-generated liveness challenge, lets the challenge run fully on-device
   // (offline). Distinct random actions from the known pool; the server adopts
   // these at verify time (security is the server-side liveness on the frames).
   function makeClientChallenge(){
     // The server's mandatory liveness is a MOTION check (landmark displacement +
     // optical flow): HEAD movement drives it. So GUARANTEE 2 head-motion actions
-    // (incl. a left/right yaw turn — the strongest signal), then add ONE expression
+    // (incl. a left/right yaw turn, the strongest signal), then add ONE expression
     // (blink/smile) for variety + anti-replay. Expression frames are sent to the
     // engine as low-motion baseline (see motion_frame_order), so they don't drag the
-    // motion score down — fixing the old blink/smile false-fail.
+    // motion score down, fixing the old blink/smile false-fail.
     const turns=["turn_left","turn_right"], tilts=["look_up","look_down"], expr=["blink","smile"];
     const r=new Uint32Array(8); crypto.getRandomValues(r);
     const a0=turns[r[0]%2];                                   // guaranteed yaw turn
@@ -857,9 +830,9 @@
   // and grows with progress. Rendered on its own 60fps loop that EASES toward the
   // target (so it glides even though detection runs at ~15fps), with a gentle
   // breathing pulse + soft glow while it's waiting for the user.
-  const RCX = 140, RCY = 178, RRX = 127, RRY = 165;   // ring ellipse — sits ~15px outside the oval, ~13px headroom in the 280×356 viewBox
+  const RCX = 140, RCY = 178, RRX = 127, RRY = 165;   // ring ellipse, sits ~15px outside the oval, ~13px headroom in the 280×356 viewBox
   (function buildRing() {
-    // Just the guide arc — no gray track, no red markers (they only added noise).
+    // Just the guide arc, no gray track, no red markers (they only added noise).
     $("ring").innerHTML =
       `<ellipse id="ringprog" cx="${RCX}" cy="${RCY}" rx="${RRX}" ry="${RRY}" fill="none"
           stroke="var(--brand)" stroke-width="6" stroke-linecap="round"
@@ -907,19 +880,35 @@
   const DIRMAP = { turn_left:{deg:180,rot:-90}, turn_right:{deg:0,rot:90}, look_up:{deg:-90,rot:0}, look_down:{deg:90,rot:180}, nod:{deg:90,rot:180} };
   function setDir(action) {
     const d = DIRMAP[action]; const a = $("p-arrow");
-    if (d) { a.classList.remove("hide"); a.classList.add("demo"); a.style.transform = `rotate(${d.rot}deg)`; return d.deg; }
-    a.classList.add("hide"); a.classList.remove("demo"); return null;
+    if (d) { a.classList.remove("hide"); a.style.transform = `rotate(${d.rot}deg)`; return d.deg; }
+    a.classList.add("hide"); return null;
   }
   // Haptic feedback when an action lands. Android WebViews support navigator.vibrate
   // (needs the VIBRATE permission); iOS WebKit does NOT, so we also ping the native
-  // bridge — the SDK fires UIImpactFeedbackGenerator. Best-effort, never throws.
+  // bridge, the SDK fires UIImpactFeedbackGenerator. Best-effort, never throws.
   function cue(kind){
-    const pat = kind==="success" ? [28,60,28] : 32;   // double-tick on full pass, single on each action
-    try{ if(navigator.vibrate) navigator.vibrate(pat); }catch(_e){}
-    try{ window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.facededupHaptic
-         && window.webkit.messageHandlers.facededupHaptic.postMessage(kind||"tick"); }catch(_e){}
+    // success  -> one firm celebratory buzz.
+    // error    -> TWO sharp buzzes (wrong move, e.g. turned left for a "right").
+    // tick      -> a light single tick when an action lands.
+    const k = kind || "tick";
+    // PREFER a native host bridge — it's the only reliable path inside a WebView
+    // (Android's navigator.vibrate is blocked without recent user activation, so
+    // the in-flow buzzes silently no-op through it). Use exactly ONE path so the
+    // buzz never doubles up.
+    let native = false;
+    try{ if(window.FacededupHost && window.FacededupHost.haptic){ window.FacededupHost.haptic(k); native = true; } }catch(_e){}      // sample host
+    try{ if(window.FacededupNative && window.FacededupNative.haptic){ window.FacededupNative.haptic(k); native = true; } }catch(_e){}  // Android SDK
+    try{ if(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.facededupHaptic){
+         window.webkit.messageHandlers.facededupHaptic.postMessage(k); native = true; } }catch(_e){}  // iOS SDK
+    if(!native){
+      // Plain browser fallback (desktop / mobile Safari standalone).
+      const pat = k==="success" ? [55]
+                : (k==="error" || k==="fail" || k==="wrong") ? [30,70,30,70,30]
+                : 28;
+      try{ if(navigator.vibrate) navigator.vibrate(pat); }catch(_e){}
+    }
   }
-  // The single SMART success mark — shown at the END of all challenges. Pops in,
+  // The single SMART success mark, shown at the END of all challenges. Pops in,
   // draws the tick, ripples out (animation re-triggered each time).
   function showCheck(){ cue("success"); setRing(0, COLOR.active); setDir(null);
     const o=$("ovalbox"); if(o){ o.style.boxShadow="none"; o.style.borderColor=COLOR.ok; }
@@ -932,7 +921,7 @@
 
   // ---- prompts ----------------------------------------------------------
   const COLOR = { idle:"#94a3b8", active:"var(--brand)", ok:"var(--green)", bad:"var(--red)" };
-  // Friendly, professional, mature result wording — randomised so it feels human.
+  // Friendly, professional, mature result wording, randomised so it feels human.
   const _pick = a => a[Math.floor(Math.random()*a.length)];
   // Liveness strictness (tester setting on the landing). Higher = harder to satisfy:
   // need = how far past the normal threshold the action must go; baseline = the user
@@ -951,7 +940,7 @@
   // Device attestation (Annex A3e): when embedded in a native SDK, ask the host
   // to mint a hardware attestation token bound to the challenge nonce (Android
   // Play Integrity / iOS App Attest). The host replies via window.__onFacededupAttestation.
-  // In a bare browser (no host) this resolves null — attestation is advisory there.
+  // In a bare browser (no host) this resolves null, attestation is advisory there.
   function nativeAttestation(nonce){
     const android = window.FacededupNative && window.FacededupNative.requestAttestation;
     const ios = window.webkit && window.webkit.messageHandlers
@@ -968,17 +957,17 @@
       setTimeout(()=>finish(null), 8000);               // don't block verify on a slow/absent host
     });
   }
-  const SUCCESS_SUBS = ["You're verified ✓","All set — you're verified ✓","Verified successfully ✓","Looks great — you're verified ✓"];
+  const SUCCESS_SUBS = ["You're verified ✓","All set, you're verified ✓","Verified successfully ✓","Looks great, you're verified ✓"];
   const OUTCOME_MSG = {
     fail: { labels:["Let's try that again","Almost there","One more try","Not quite yet"],
-            subs:["We couldn't confirm a live face — center your face and follow the prompts.",
-                  "Let's give that another go — keep your whole face in the oval and hold steady.",
+            subs:["We couldn't confirm a live face, center your face and follow the prompts.",
+                  "Let's give that another go, keep your whole face in the oval and hold steady.",
                   "Hold steady and complete each prompt, then try once more.",
-                  "Almost — make sure your face fills the oval and follow the on-screen actions."] },
+                  "Almost, make sure your face fills the oval and follow the on-screen actions."] },
     referred: { labels:["Quick review needed","Under review","Almost done"],
                 subs:["We'll take a closer look and confirm shortly.",
-                      "This one needs a quick manual check — thanks for your patience.",
-                      "Thanks — your verification is being reviewed."] } };
+                      "This one needs a quick manual check, thanks for your patience.",
+                      "Thanks, your verification is being reviewed."] } };
   function friendlyOutcome(outcome){
     const m = OUTCOME_MSG[outcome==="referred" ? "referred" : "fail"];
     return { label:_pick(m.labels), sub:_pick(m.subs) };
@@ -992,14 +981,14 @@
       position:["Position your face","Center your face in the oval"],
       hold:["Hold still","Keep looking at the camera"],
       blink:["Blink","Blink your eyes once"], smile:["Smile","Give us a smile"],
-      turn_left:["Turn left","Phone still — turn your head left"],
-      turn_right:["Turn right","Phone still — turn your head right"],
-      look_up:["Look up","Phone still — tilt your head up"],
-      look_down:["Look down","Phone still — tilt your head down"],
+      turn_left:["Turn left","Phone still, turn your head left"],
+      turn_right:["Turn right","Phone still, turn your head right"],
+      look_up:["Look up","Phone still, tilt your head up"],
+      look_down:["Look down","Phone still, tilt your head down"],
       nod:["Nod","Nod your head down"],
       number:["Read the numbers","Say the numbers shown aloud"],
       voice:["Read the phrase","Say the phrase shown aloud"],
-      verify:["Verifying…","Almost there — hold on a sec"],
+      verify:["Verifying…","Almost there, hold on a sec"],
       live:"Verified. You are live.", not_live:"Verification failed. Please try again.",
       referred:"We need a manual review.",
       ui:{ title:"Verify Your Identity", subtitle:"Choose a method below to confirm your identity.",
@@ -1014,8 +1003,8 @@
       position:["Put your face well","Make your face dey inside the circle"],
       hold:["No move","Continue to look the camera"],
       blink:["Blink","Blink your eye one time"], smile:["Smile","Make small smile"],
-      turn_left:["Turn left","Hold phone steady — turn your head left"],
-      turn_right:["Turn right","Hold phone steady — turn your head right"],
+      turn_left:["Turn left","Hold phone steady, turn your head left"],
+      turn_right:["Turn right","Hold phone steady, turn your head right"],
       nod:["Nod","Nod your head down"],
       number:["Read the numbers","Talk the numbers wey show for screen"],
       voice:["Read the words","Talk the words wey show"],
@@ -1133,49 +1122,8 @@
 
   // ---- MediaPipe (client-side detection) --------------------------------
   let landmarker = null, latest = null, looping = false;
-  // NEUTRAL head-pitch baseline. Phones sit BELOW the face, so a user's resting
-  // ("neutral") pitch is not 0 — it's biased negative. Judging look up/down on the
-  // ABSOLUTE pitch therefore makes look_down nearly impossible and look_up trigger on
-  // the baseline. We track the resting pitch (EMA, only when horizontally frontal and
-  // NOT mid up/down action, ignoring big deflections) and judge up/down as a DELTA.
-  let neutralPitch = null, _verticalActive = false;
-  function trackNeutralPitch(f){
-    if(_verticalActive || !f || !f.face || !f.pose) return;
-    if(Math.abs(f.pose.yaw||0) > 16) return;            // only when horizontally frontal
-    const p = f.pose.pitch||0;
-    if(neutralPitch == null){ neutralPitch = p; return; }
-    if(Math.abs(p - neutralPitch) < 8) neutralPitch += (p - neutralPitch) * 0.05; // ignore the actual look
-  }
-  function pitchDelta(f){ return (f?.pose?.pitch||0) - (neutralPitch||0); }
-
-  // PHONE-TILT guard. Tilting the PHONE up/down also changes the apparent head pitch,
-  // so a user could pass look up/down without moving their head. We track the device's
-  // pitch and, for vertical actions, REJECT progress while the phone itself is being
-  // tilted — the move must come from the HEAD ("phone still").
-  //
-  // SOURCE PRIORITY: the NATIVE SDK feeds phone pitch via window.__facededupPhone(deg)
-  // (Android SensorManager / iOS CoreMotion) — reliable inside a WebView. Web
-  // DeviceOrientationEvent is a fallback for plain mobile browsers; it frequently does
-  // NOT fire inside an Android WebView (loadDataWithBaseURL), which is why a native feed
-  // is needed. If neither is available, phoneBeta stays null and nothing is gated.
-  let phoneBeta = null, _phoneNative = false;
-  // Native bridge: the host app calls this every frame with the device pitch in degrees.
-  window.__facededupPhone = (deg)=>{ if(deg != null && isFinite(deg)){ phoneBeta = +deg; _phoneNative = true; } };
-  function _onOrient(e){ if(!_phoneNative && e && e.beta != null) phoneBeta = e.beta; }  // beta ≈ phone pitch (browser fallback)
-  let _orientOn = false;
-  function startOrientation(){
-    if(_orientOn) return; _orientOn = true;
-    try{
-      const DOE = window.DeviceOrientationEvent;
-      if(DOE && typeof DOE.requestPermission === "function"){
-        DOE.requestPermission().then(s=>{ if(s==="granted") window.addEventListener("deviceorientation", _onOrient); }).catch(()=>{});
-      } else if(DOE){
-        window.addEventListener("deviceorientation", _onOrient);
-      }
-    }catch(_){}
-  }
   // Preload the engine in the background (during method-select / consent) so it's
-  // ready by capture time — the user never waits on a "loading" message.
+  // ready by capture time, the user never waits on a "loading" message.
   let mpPromise = null;
   function preloadMP(){ if(!mpPromise) mpPromise = initMP().catch(e=>{ mpPromise=null;
     try{ clientLog("mp_init","error", String(e&&e.message||e)); }catch(_){} throw e; }); return mpPromise; }
@@ -1190,22 +1138,22 @@
   }
   async function initMP() {
     const { FaceLandmarker, FilesetResolver } = await withTimeout(_loadVision(), 30000,
-      "mp:import — couldn't load the vision module (CDN/S3).");
+      "mp:import, couldn't load the vision module (CDN/S3).");
     let wasmRoot = MP_WASM;                                       // jsdelivr /wasm
     try { const r = await fetch(MP_WASM + "/vision_wasm_internal.js", {method:"HEAD"}); if(!r.ok) wasmRoot = MP_S3 + "/mp/wasm"; }
     catch { wasmRoot = MP_S3 + "/mp/wasm"; }                      // fallback: our S3 wasm
     const fileset = await withTimeout(FilesetResolver.forVisionTasks(wasmRoot), 30000,
-      "mp:wasm — couldn't load the WASM runtime.");
+      "mp:wasm, couldn't load the WASM runtime.");
     const opts = (delegate) => ({
       baseOptions: { modelAssetPath: MODEL, delegate },
-      runningMode: "VIDEO", numFaces: 1,
+      runningMode: "VIDEO", numFaces: 2,
       outputFaceBlendshapes: true, outputFacialTransformationMatrixes: true,
     });
     // CPU (WASM) delegate by default: reliable across desktop AND Android WebView.
     // The GPU delegate builds OK but silently fails at inference on many mobile
     // WebView GL stacks -> "no face detected" forever. CPU is plenty for liveness.
     landmarker = await withTimeout(FaceLandmarker.createFromOptions(fileset, opts("CPU")), 30000,
-      "mp:model — couldn't create the FaceLandmarker (model/WASM init).");
+      "mp:model, couldn't create the FaceLandmarker (model/WASM init).");
   }
 
   // ===== Off-main-thread detection (Web Worker) =============================
@@ -1225,7 +1173,7 @@
             const fs=await v.FilesetResolver.forVisionTasks(m.wasmRoot);
             lm=await v.FaceLandmarker.createFromOptions(fs,{
               baseOptions:{ modelAssetPath:m.model, delegate:'CPU' },
-              runningMode:'VIDEO', numFaces:1,
+              runningMode:'VIDEO', numFaces: 2,
               outputFaceBlendshapes:true, outputFacialTransformationMatrixes:true });
             self.postMessage({type:'ready'});
           }catch(err){ self.postMessage({type:'error', error:String(err&&err.message||err)}); }
@@ -1249,7 +1197,7 @@
       // CLASSIC worker (not module): MediaPipe's WASM loader uses importScripts()
       // which module workers forbid; classic workers allow BOTH importScripts and
       // dynamic import() (used below to load the engine). Requires Safari 16.4+ /
-      // modern Android WebView — older engines fall back to timed capture.
+      // modern Android WebView, older engines fall back to timed capture.
       try{ w = new Worker(URL.createObjectURL(new Blob([_mpWorkerSource()], {type:'text/javascript'}))); }
       catch(e){ return reject(new Error('worker unsupported: '+(e&&e.message||e))); }
       // Resolve the wasm root the same way initMP does (CDN, S3 fallback).
@@ -1262,13 +1210,12 @@
       };
       w.onerror = (ev)=>{ try{w.terminate();}catch(_){} reject(new Error('mp:worker '+(ev.message||'error'))); };
       w.postMessage({type:'init', lib:MP_CDN, libFallback:MP_S3+'/mp/vision_bundle.mjs', wasmRoot, model:MODEL});
-    }), 20000, "mp:worker — couldn't start the off-thread engine.");
+    }), 20000, "mp:worker, couldn't start the off-thread engine.");
   }
   function onWorkerMsg(e){
     if(e.data.type!=='result') return;
     workerBusy = false;
     latest = e.data.res ? processLandmarks(e.data.res) : { face:false };
-    trackNeutralPitch(latest);
     collectMotion(performance.now());
   }
   let _mpWorkerPromise = null;
@@ -1279,13 +1226,13 @@
   }
 
   // ───────────── NATIVE DETECTION BRIDGE (native hybrid) ─────────────
-  // When the native SDK ships an on-device detector — Apple Vision on iOS, MediaPipe
-  // Tasks on Android — it sets window.__FACEDEDUP_NATIVE_DETECT at document start. We
+  // When the native SDK ships an on-device detector, Apple Vision on iOS, MediaPipe
+  // Tasks on Android, it sets window.__FACEDEDUP_NATIVE_DETECT at document start. We
   // then route detection through native instead of the WASM Worker: ship each throttled
   // frame to native, which posts pose + landmark signals back via window.__facededupPose().
   // The result is wrapped into the SAME `latest` shape processLandmarks() produces, so
   // every downstream flow/coaching/action check is unchanged. The camera, preview and
-  // frame capture all stay in the WebView — native only does detection. Transport is
+  // frame capture all stay in the WebView, native only does detection. Transport is
   // iOS WKWebView messageHandlers OR an Android addJavascriptInterface (FacededupDetect).
   // iOS sets the flag via a document-start user script; Android WebView has no clean
   // equivalent, so its SDK passes ?native=mp (and registers window.FacededupDetect).
@@ -1296,7 +1243,7 @@
   let nativeBusy = false, nativeReady = false;
   const _nc = document.createElement("canvas"), _nctx = _nc.getContext("2d");
   function nativeFrameB64(){
-    // Downscaled mirrored frame — Vision is accurate at this size and it keeps the
+    // Downscaled mirrored frame, Vision is accurate at this size and it keeps the
     // bridge payload light (~15KB) at ~12fps. Detection signals are normalised, so
     // resolution doesn't affect coverage/noseOff/pose.
     const W=360, H=480;
@@ -1324,7 +1271,6 @@
         if(Math.abs(latest.pose.yaw)<=12 && Math.abs(latest.pose.pitch)<=12 && latest.coverage>0.35)
           lastFaceAttrs = latest.attrs;
       } else { latest = { face:false }; }
-      trackNeutralPitch(latest);
       collectMotion(performance.now());
     };
   }
@@ -1343,12 +1289,11 @@
       } else { nativeBusy = false; }
     }catch(_e){ nativeBusy=false; }
   }
-  // DIAGNOSTIC badge: shows which detection engine is live. Auto-fades; off with ?diag=0.
+  // DIAGNOSTIC badge: shows which detection engine is live. OPT-IN now (clean UI by
+  // default) — add ?diag=1 to show it.
   let _badgeEl = null;
   function engineBadge(text){
     try{
-      // Diagnostic badge is OFF by default (end users / SDK launches never see it).
-      // Enable only with ?diag=1 for debugging.
       if(new URLSearchParams(location.search).get("diag") !== "1") return;
       if(!_badgeEl){
         _badgeEl = document.createElement("div");
@@ -1402,9 +1347,11 @@
   }
   // Turn a raw MediaPipe result into our face state. Shared by the main-thread path
   // (readFrame) and the iOS Web-Worker path (worker posts back the raw result, this
-  // runs on the main thread — it's cheap; only detectForVideo is heavy).
+  // runs on the main thread, it's cheap; only detectForVideo is heavy).
   function processLandmarks(res) {
     if (!res?.faceLandmarks?.length) return { face:false };
+    // More than one face in frame -> reject (anti-spoof: no second person / photo).
+    if (res.faceLandmarks.length > 1) return { face:false, multi:true };
     const lm = res.faceLandmarks[0];
     const bs = {}; (res.faceBlendshapes?.[0]?.categories||[]).forEach(c=>bs[c.categoryName]=c.score);
     let ys=1,ye=0,xs=1,xe=0; for(const p of lm){ys=Math.min(ys,p.y);ye=Math.max(ye,p.y);xs=Math.min(xs,p.x);xe=Math.max(xe,p.x);}
@@ -1456,6 +1403,17 @@
     if(motionBuf.length > 16) motionBuf.shift();
   }
   // Farthest-point pick on pose -> up to 5 frames spanning the most motion.
+  // The server rejects > 30 frames (422). Keep the portrait + every action-proof
+  // frame (the challenge evidence), then fill the rest with look/motion frames.
+  function capFrames(frames, max){
+    const f = (frames||[]).filter(Boolean);
+    if(f.length <= max) return f;
+    const isAction = x => x && x.proves_action && x.proves_action !== "look";
+    const head = f[0] ? [f[0]] : [];
+    const out = [...head, ...f.filter((x,i)=> i>0 && isAction(x))];
+    for(let i=1;i<f.length && out.length<max;i++){ if(!isAction(f[i])) out.push(f[i]); }
+    return out.slice(0, max);
+  }
   function selectMotionFrames(){
     const b = motionBuf;
     if(b.length <= 5) return b.map(x=>x.jpg);
@@ -1471,7 +1429,7 @@
   }
   function loop(){ if(!looping) return;
     const t = performance.now();
-    if (t - _lastDet >= 66) {
+    if (t - _lastDet >= 33) {   // ~30fps detection -> face appear/disappear registers ~2x faster
       if (NATIVE_DETECT && nativeReady) {
         // Native mode (iOS): ship a frame to the Vision detector; result arrives via
         // window.__facededupPose. Skip if one is still in flight so we never queue.
@@ -1486,7 +1444,7 @@
             .catch(() => { workerBusy = false; });
         }
       } else {
-        _lastDet = t; latest = readFrame() || latest; trackNeutralPitch(latest); collectMotion(t);   // main-thread mode
+        _lastDet = t; latest = readFrame() || latest; collectMotion(t);   // main-thread mode
       }
     }
     requestAnimationFrame(loop); }
@@ -1517,8 +1475,8 @@
       vrec.start();
     }catch{ vrec=null; }
   }
-  // Upload the review clip? OFF = faster verify. The clip is evidence-only — the
-  // liveness DECISION is the server multi-frame motion check, not the video — so
+  // Upload the review clip? OFF = faster verify. The clip is evidence-only, the
+  // liveness DECISION is the server multi-frame motion check, not the video, so
   // skipping its upload (up to ~3MB of base64 over a mobile uplink) cuts seconds
   // off "verifying" with no effect on the verdict. Flip on if you need stored video.
   const REVIEW_VIDEO = false;
@@ -1547,7 +1505,7 @@
   }
   // ---- smart mic meter: live volume bar + voice-activity auto-advance ----
   function showMic(label){ $("mm-text").textContent = label || "Listening…";
-    $("mm-fill").style.width = "0%"; $("micmeter").classList.remove("heard","quiet");
+    $("mm-fill").style.width = "0%"; $("micmeter").classList.remove("heard");
     $("start").style.display = "none"; $("micmeter").style.display = "flex"; }
   function hideMic(){ $("micmeter").style.display = "none"; }
 
@@ -1562,43 +1520,25 @@
     const src = ctx.createMediaStreamSource(stream);
     const an = ctx.createAnalyser(); an.fftSize = 512; an.smoothingTimeConstant = 0.6; src.connect(an);
     const buf = new Uint8Array(an.fftSize);
-    let raf = 0, spoke = false, voiced = 0, quietSince = 0, peak = 0, peakMax = 0;
-    const t0 = performance.now();
-    let lastText = "";
-    // VISUAL coaching only — never speak() here. The mic is recording during this
-    // window, so any TTS would land in the mic (polluting the audio sent to the
-    // server) and register as "voice" in the meter, breaking the silence/settle
-    // detection. Update the status line only on change (no per-frame thrash).
-    function say(t){
-      if(t === lastText) return; lastText = t; $("mm-text").textContent = t;
-    }
+    let raf = 0, spoke = false, voiced = 0, quietSince = 0, peak = 0;
     function tick(){
       an.getByteTimeDomainData(buf);
       let sum = 0; for(let i=0;i<buf.length;i++){ const v=(buf[i]-128)/128; sum += v*v; }
-      const lvl = Math.min(1, Math.sqrt(sum/buf.length) * 3.4);
+      const lvl = Math.min(1, Math.sqrt(sum/buf.length) * 6.0);
       peak = Math.max(lvl, peak*0.92);
-      peakMax = Math.max(peakMax, peak);
       fill.style.width = (peak*100).toFixed(1) + "%";
       const t = performance.now();
       for(let i=0;i<eqs.length;i++)
         eqs[i].style.height = (6 + peak*22*(0.55 + 0.45*Math.abs(Math.sin(t/90 + i)))).toFixed(0) + "px";
-      if(lvl > 0.2){ voiced++; quietSince = 0;
-        if(voiced > 4 && !spoke){ spoke = true; box.classList.add("heard"); box.classList.remove("quiet"); }
-        // Coach the level while they read: latch positive once they're loud enough
-        // (peakMax only grows), so it never flickers back to "louder".
-        if(spoke) say(peakMax >= 0.40 ? "🎙 I can hear you — keep going" : "🔈 A little louder…");
-      }
-      else {
-        if(spoke){ if(!quietSince) quietSince = t; else { say("✓ Got it"); if(t - quietSince > 800) settledRes(); } }
-        // Never picked up a voice — nudge after a beat (bad mic, muted, too far).
-        else if(t - t0 > 1800){ box.classList.add("quiet"); say("🔇 We can't hear you — speak up"); }
-      }
+      if(lvl > 0.12){ voiced++; quietSince = 0;
+        if(voiced > 4 && !spoke){ spoke = true; box.classList.add("heard"); $("mm-text").textContent = "Heard you ✓"; } }
+      else if(spoke){ if(!quietSince) quietSince = t; else if(t - quietSince > 800) settledRes(); }
       raf = requestAnimationFrame(tick);
     }
     raf = requestAnimationFrame(tick);
     return { stop(){ cancelAnimationFrame(raf); try{ src.disconnect(); ctx.close(); }catch{} }, settled };
   }
-  // Speech-to-text controller (start now, stop later) — interim results kept.
+  // Speech-to-text controller (start now, stop later), interim results kept.
   function startListen(){
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if(!SR) return { supported:false, stop:async()=>({transcript:"", supported:false}) };
@@ -1628,26 +1568,56 @@
   function actionProgress(action, f){
     if(!f?.face) return 0;
     const b=f.bs||{};
-    if(action==="blink") return ((b.eyeBlinkLeft||0)+(b.eyeBlinkRight||0))/2 / 0.42;
-    if(action==="smile") return ((b.mouthSmileLeft||0)+(b.mouthSmileRight||0))/2 / 0.40;
-    // Use the mirror-consistent nose offset (see readFrame) — turn toward the
+    // iOS uses Apple Vision (no smile/blink blendshapes — they're approximated from
+    // landmarks), so its expression signal is coarser/weaker than Android MediaPipe's.
+    // Use a lower pass bar on iOS so a normal blink/smile registers first time;
+    // Android keeps its original thresholds (untouched).
+    if(action==="blink") return ((b.eyeBlinkLeft||0)+(b.eyeBlinkRight||0))/2 / (IS_IOS ? 0.30 : 0.42);
+    if(action==="smile") return ((b.mouthSmileLeft||0)+(b.mouthSmileRight||0))/2 / (IS_IOS ? 0.26 : 0.40);
+    // Use the mirror-consistent nose offset (see readFrame), turn toward the
     // user's left => noseOff < 0; toward their right => noseOff > 0. ~0.07 of the
     // face width is a clear, comfortable turn (loosened for reliable detection).
-    if(action==="turn_left") return Math.max(0,-(f.noseOff||0)) / 0.07;
-    if(action==="turn_right") return Math.max(0,(f.noseOff||0)) / 0.07;
-    // Vertical actions are judged as a DELTA from the tracked neutral pitch (phones
-    // sit below the face, so absolute pitch is biased). up = look-UP (delta-),
-    // down = look-DOWN (delta+). ~8° of deliberate tilt = satisfied.
-    const dp = pitchDelta(f);
-    if(action==="look_up") return Math.max(0,-dp) / 11;   // deliberate head tilt (not a twitch / phone wobble)
-    if(action==="look_down") return Math.max(0,dp) / 11;
-    if(action==="nod") return Math.max(0,dp) / 14;   // nod = look DOWN (delta+)
+    // iOS direction comes from Apple Vision (noseOff + a GEOMETRIC pitch, no Euler
+    // head-pose blendshapes), so its magnitude is weaker — a comfortable look-down
+    // only nudges the geometric pitch ~4-7, below the 9 bar, so it never passed.
+    // Lower the iOS bars so every direction (esp. look-down) registers; Android keeps
+    // its original, tuned thresholds (untouched).
+    if(action==="turn_left") return Math.max(0,-(f.noseOff||0)) / (IS_IOS ? 0.05 : 0.07);
+    if(action==="turn_right") return Math.max(0,(f.noseOff||0)) / (IS_IOS ? 0.05 : 0.07);
+    if(action==="look_up") return Math.max(0,-(f.pose?.pitch||0)) / (IS_IOS ? 5 : 9);  // up = pitch-
+    if(action==="look_down") return Math.max(0,(f.pose?.pitch||0)) / (IS_IOS ? 5 : 9); // down = pitch+
+    if(action==="nod") return Math.max(0,f.pose.pitch) / 14;   // nod = look DOWN (pitch+)
     return 0;
   }
 
   // ---- intelligence: lighting + sharpness on a tiny sampling canvas ------
   const probe = document.createElement("canvas"); probe.width=48; probe.height=64;
   const pctx = probe.getContext("2d", { willReadFrequently:true });
+  // Force the camera <video> to actually PLAY and paint frames. Some Android
+  // WebViews (notably MIUI) leave a MediaStream <video> PAUSED and render a
+  // mirrored play-button overlay (the left-pointing triangle) until play() is
+  // forced. Retry play() and wait for real frames so the oval shows the camera,
+  // never a play icon. Returns true once frames are flowing.
+  async function playVideoReliably(v){
+    v.muted = true; v.defaultMuted = true; v.controls = false;
+    v.setAttribute("playsinline",""); v.setAttribute("webkit-playsinline","");
+    try{ v.disablePictureInPicture = true; }catch(_e){}
+    for(let i=0;i<6;i++){
+      try{ await v.play(); }catch(_e){}
+      const ok = await new Promise(res=>{
+        const t0=performance.now();
+        (function check(){
+          if(v.videoWidth>0 && !v.paused) return res(true);   // metadata + actively playing
+          if(performance.now()-t0>700) return res(false);
+          requestAnimationFrame(check);
+        })();
+      });
+      if(ok) return true;
+      await sleep(120);
+    }
+    return false;
+  }
+
   function frameStats(){ // luminance + gradient energy (focus proxy)
     pctx.drawImage(video,0,0,48,64);
     const d=pctx.getImageData(0,0,48,64).data;
@@ -1656,6 +1626,25 @@
     let edge=0; for(let p=1;p<g.length;p++){ const dd=g[p]-g[p-1]; edge+=dd*dd; }
     return { luma:sum/g.length, sharp:edge/g.length };
   }
+
+  // ---- Auto screen brightness: light the user's face in low light --------------
+  // Asks the NATIVE host to raise the device screen brightness (window.screenBrightness).
+  // level 1 = full bright, -1 = restore. No-op outside the native host (plain browser).
+  function hostBrightness(level){
+    try{
+      const v = String(level);
+      if(window.FacededupHost && window.FacededupHost.setScreenBrightness) window.FacededupHost.setScreenBrightness(v);
+      if(window.FacededupNative && window.FacededupNative.setScreenBrightness) window.FacededupNative.setScreenBrightness(v);
+      if(window.webkit?.messageHandlers?.facededupBrightness) window.webkit.messageHandlers.facededupBrightness.postMessage(v);  // STRING — iOS handler reads message.body as String
+    }catch(_){}
+  }
+  // Full screen brightness for the duration of the liveness capture, restored on
+  // exit. We intentionally do NOT gate on measured luma: phone cameras auto-expose,
+  // so the frame rarely reads as "dark" even in a dim room and a luma trigger would
+  // almost never fire. Lighting the screen during capture is what actually helps.
+  let screenLightOn=false;
+  function captureBrightnessOn(){ if(screenLightOn) return; screenLightOn=true; hostBrightness(1); }
+  function captureBrightnessOff(){ if(!screenLightOn) return; screenLightOn=false; hostBrightness(-1); }
 
   // ---- focus: many Android WebViews (notably several Huawei builds) hand us a
   // BLURRY first frame; capturing then fails the server sharpness / anti-spoof
@@ -1701,7 +1690,7 @@
   async function timedCapture(action){
     const dd = setDir(action);
     // This path has NO on-device detection (iOS), so it can't tell when the user
-    // actually moved — it must pace for a human: announce the action, give time to
+    // actually moved, it must pace for a human: announce the action, give time to
     // read + start moving, THEN capture across the whole movement so the challenge
     // can't blow past the user. The server verifies the real motion from the frames.
     setPrompt(action, step(action).hint);
@@ -1715,36 +1704,61 @@
     }
     return out;
   }
+  // ---- Continuous single-face presence lock (anti-spoof) -------------------
+  // The SAME single face must stay inside the oval continuously from "Hold Still"
+  // through every challenge. If it leaves, is occluded, a 2nd face appears, or
+  // tracking drops even briefly, we throw PresenceLost -> the orchestrator cancels
+  // the current challenge and forces a full restart from Hold Still. This blocks
+  // replay videos, printed photos, second-phone screens, multiple faces and
+  // mid-flow face swaps: none can keep one live face held the whole time.
+  class PresenceLost extends Error { constructor(){ super("presence"); this.presence = true; } }
+  // Strict "is the face properly in the oval" (entry gate for Hold Still).
+  function faceInOval(f){
+    if(!f || !f.face || f.multi) return false;
+    return f.coverage>0.30 && f.coverage<0.92 && Math.abs(f.cx-0.5)<0.20 && Math.abs(f.cy-0.46)<0.22;
+  }
+  // Looser "is the face still basically held in the oval" (tolerate natural motion
+  // during challenges; only a real exit/occlusion/second-face trips this).
+  function faceHeldInOval(f){
+    if(!f || !f.face || f.multi) return false;
+    return f.coverage>0.22 && f.coverage<0.98 && Math.abs(f.cx-0.5)<0.32 && Math.abs(f.cy-0.46)<0.32;
+  }
+  let _absentSince = 0;
+  // Call every frame inside a challenge. Allow a tiny (220ms) grace for a dropped
+  // detection frame; beyond that the face has genuinely left -> abort + restart.
+  function assertPresence(){
+    if(faceHeldInOval(latest)){ _absentSince = 0; return; }
+    if(!_absentSince) _absentSince = performance.now();
+    else if(performance.now() - _absentSince > 220) throw new PresenceLost();
+  }
+
   async function captureAction(action, ms){
     const dirDeg = setDir(action);                         // arrow + arc direction
     const isTurn = action==="turn_left" || action==="turn_right";
+    const isExpr = action==="blink" || action==="smile";   // momentary (not held)
     const o = $("ovalbox");
-    let best=null, bestP=0, _hitAt=0, _sawLow=false; const got=[]; const t=performance.now();
-    // Freeze the neutral-pitch baseline while a vertical action is in progress so the
-    // user's deliberate up/down tilt can't drag the baseline it's measured against.
-    const isVertical = (action==="look_up" || action==="look_down" || action==="nod");
-    _verticalActive = isVertical;
-    const phoneBeta0 = phoneBeta;   // phone tilt at action start (null if no sensor)
+    let best=null, bestP=0, _hitAt=0, _sawLow=false, _wrongBuzzed=false; const got=[]; const t=performance.now();
     const need = STRICT_NEED[strictness] || 1, requireBaseline = strictness!=="lenient";
     while(performance.now()-t<ms){
-      let prog = actionProgress(action, latest)/need;   // strictness raises the bar
-      // Phone-tilt guard: on vertical actions the move must come from the HEAD — while
-      // the PHONE itself is being tilted, suppress progress so it can't complete. No-op
-      // when the orientation sensor is unavailable (phoneBeta null → falls back to pose).
-      const phoneCheating = isVertical && phoneBeta!=null && phoneBeta0!=null
-                            && Math.abs(phoneBeta - phoneBeta0) > 8;
-      if(phoneCheating) prog = Math.min(prog, 0.2);
+      assertPresence();                                   // face left the oval -> abort + restart Hold Still
+      const prog = actionProgress(action, latest)/need;   // strictness raises the bar
       const p=Math.min(1, prog);
       if(prog < 0.35) _sawLow=true;                        // saw a neutral baseline
       // Is the user doing the WRONG thing? (wrong way, looking down for "up",
-      // tilting the phone instead of the head, or no face in frame.)
+      // or no face in frame.)
       let wrong = false;
-      if(phoneCheating) wrong = true;
-      else if(!latest?.face) wrong = true;
+      if(!latest?.face) wrong = true;
       else if(action==="turn_left")  wrong = (latest.noseOff||0) > 0.05;
       else if(action==="turn_right") wrong = (latest.noseOff||0) < -0.05;
-      else if(action==="look_up")    wrong = pitchDelta(latest) > 5;   // looking DOWN when asked UP
-      else if(action==="look_down")  wrong = pitchDelta(latest) < -5;  // looking UP when asked DOWN
+      else if(action==="look_up")    wrong = (latest.pose?.pitch||0) > 5;
+      else if(action==="look_down")  wrong = (latest.pose?.pitch||0) < -5;
+      // Double-buzz the MOMENT the user moves the WRONG way (e.g. turns left for a
+      // "turn right"). Face must be present (a missing face is a presence issue, not
+      // a wrong move) and we only buzz on the entry into the wrong state, then reset
+      // when they correct, so it nudges once per mistake instead of every frame.
+      const wrongMove = wrong && !!latest?.face && p<0.6;
+      if(wrongMove && !_wrongBuzzed){ cue("error"); _wrongBuzzed=true; }
+      else if(!wrong){ _wrongBuzzed=false; }
       // Colour: RED when doing the wrong thing, brand otherwise. (Success is shown
       // by the check mark, not a green ring.)
       const col = (wrong && p<0.6) ? COLOR.bad : COLOR.active;
@@ -1755,7 +1769,7 @@
         if(o){ o.style.boxShadow = bad ? `0 0 22px ${COLOR.bad}` : "none";
                o.style.borderColor = bad ? COLOR.bad : "#e6eaed"; }
       } else {
-        // Blink / smile: no direction — the whole OVAL glows.
+        // Blink / smile: no direction, the whole OVAL glows.
         setRing(0, col);
         if(o){
           const tg=performance.now()/1000;
@@ -1764,11 +1778,10 @@
           o.style.boxShadow = `0 0 ${(9 + p*28 + pulse).toFixed(0)}px ${col}`;
         }
       }
-      // Smart nudge: tell them what's wrong — never silently fail.
-      let hint = `${step(action).hint} ${Math.round(p*100)}%`;
+      // Smart nudge: tell them what's wrong, never silently fail.
+      let hint = step(action).hint;
       if(wrong && p<0.6){
-        hint = phoneCheating ? "📵 Hold the phone still — move your head"
-             : !latest?.face ? "Keep your face in the oval"
+        hint = !latest?.face ? "Keep your face in the oval"
              : action==="look_up" ? "☝️ Tilt your head up"
              : action==="look_down" ? "👇 Tilt your head down"
              : isTurn ? "↪ Turn the other way" : hint;
@@ -1777,37 +1790,59 @@
       // Capture proving frames once detected, but HOLD ~0.6s after success so it
       // never rushes to the next action (consistent pacing).
       const ready = p>=1 && (!requireBaseline || _sawLow);   // must transition into it
-      if(ready){ if(got.length<3){ const fr=grab(action); got.push(fr); if(p>bestP){ bestP=p; best=fr; } }
+      if(ready){ if(got.length<2){ const fr=grab(action); got.push(fr); if(p>bestP){ bestP=p; best=fr; } }
         if(!_hitAt) _hitAt=performance.now();
-        if(performance.now()-_hitAt >= 600 && got.length>=3) break; }
+        if(performance.now()-_hitAt >= 600 && got.length>=2) break; }
       else if(requireBaseline && !_sawLow && p>=1){ $("p-hint").textContent="Back to centre, then "+step(action).hint.toLowerCase(); }
+      // Momentary expressions (blink/smile) relax the sustained gate above: a blink
+      // reopens in ~150ms so it can't stay at peak until the 600ms/3-frame mark,
+      // which forced repeated blinks. Once a solid peak was captured, latch success
+      // shortly after even if the expression already relaxed. Turn/look unchanged.
+      if(isExpr && IS_IOS && _hitAt && got.length>=1 && performance.now()-_hitAt >= 350) break;
       await sleep(45);
     }
-    if(best && !got.includes(best) && got.length<3) got.unshift(best);
-    got.length = Math.min(got.length, 3);   // cap frames per action (server allows 30 total)
+    if(best && !got.includes(best) && got.length<2) got.unshift(best);
+    got.length = Math.min(got.length, 2);   // 2 light frames per action (payload-minimal)
     setDir(null);
-    _verticalActive = false;   // resume neutral-pitch tracking
     if(o){ o.style.boxShadow="none"; o.style.borderColor="#e6eaed"; }   // clear glow
     return got;
   }
 
-  // Passive "just look" — hold still while we analyze (Hybrid: passive + active).
+  // Hold Still: the GATE for the whole flow. ONE face must be detected, centred and
+  // held continuously in the oval for `ms`. The hold timer RESETS the instant the
+  // face leaves / a 2nd face appears / it drifts off-centre, so the user cannot
+  // start a challenge with a photo or a different face. Only an unbroken single-face
+  // hold lets the challenges begin. Also drives auto screen brightness.
   async function captureLook(ms){
-    setDir(null); const o=$("ovalbox"); const got=[]; const t=performance.now();
-    while(performance.now()-t<ms){
-      const f=latest; const p=Math.min(1,(performance.now()-t)/ms);
-      setRing(0, COLOR.active);
-      if(o){ o.style.borderColor=COLOR.active; o.style.boxShadow=`0 0 ${(10+p*20).toFixed(0)}px ${COLOR.active}`; }
-      $("p-hint").textContent = f?.face ? `Hold still, checking ${Math.round(p*100)}%` : "Look at the camera";
-      if(f?.face && (performance.now()-t)>ms*0.4) got.push(grab("look"));
-      await sleep(90);
+    setDir(null); const o=$("ovalbox"); const got=[];
+    let heldStart = 0;                                  // when the CURRENT unbroken hold began
+    while(true){
+      const f = latest, now = performance.now();
+      const ok = faceInOval(f);                          // strict, single-face, centred
+      if(ok){
+        if(!heldStart) heldStart = now;                  // start / continue this hold
+        const held = now - heldStart, p = Math.min(1, held/ms);
+        setRing(0, COLOR.active);
+        if(o){ o.style.borderColor=COLOR.active; o.style.boxShadow=`0 0 ${(10+p*20).toFixed(0)}px ${COLOR.active}`; }
+        $("p-hint").textContent = "Hold still";
+        if(held > ms*0.4 && got.length < 2) got.push(grab("look"));   // 2 light proving frames (payload-minimal)
+        if(held >= ms) break;                            // unbroken hold complete -> begin challenges
+      } else {
+        // Face absent / off-centre / multiple faces -> RESET the hold from zero.
+        heldStart = 0; got.length = 0;
+        setRing(0, COLOR.bad);
+        if(o){ o.style.borderColor="#e6eaed"; o.style.boxShadow="none"; }
+        $("p-hint").textContent = (f && f.multi) ? "Only one face in the oval"
+                                 : "Center your face in the oval";
+      }
+      await sleep(70);
     }
     if(o){ o.style.boxShadow="none"; o.style.borderColor="#e6eaed"; }
     return got.length ? got : [grab(null)];
   }
 
   // Frontal-burst frames for the SERVER liveness/anti-spoof engine: faces are
-  // always detectable (the action peaks — extreme turns/blinks — lose the face and
+  // always detectable (the action peaks, extreme turns/blinks, lose the face and
   // make the multi-frame engine 400 "no face"). Natural micro-motion across the
   // burst still proves a live person (a static photo has none).
   let liveBurst = [];
@@ -1821,51 +1856,64 @@
       if(f?.face){
         const frontal=1-Math.min(1,(Math.abs(f.pose.yaw)+Math.abs(f.pose.pitch))/40);
         const q=s.sharp*0.6 + frontal*4000;     // favour sharp + frontal
-        if(q>score){ score=q; best=grab(null); }
-        if(liveBurst.length<5 && now-lastGrab>140){ liveBurst.push(grab("look")); lastGrab=now; }
+        if(q>score){ score=q; best=grab(null,{selfie:true}); }   // crisp selfie
+        if(liveBurst.length<3 && now-lastGrab>160){ liveBurst.push(grab("look")); lastGrab=now; }
       } else {
         // No on-engine face (tracking-broken devices): still keep the SHARPEST
         // frame so the server gets a crisp portrait, not a blurry blind grab.
-        if(s.sharp>score){ score=s.sharp; best=grab(null); }
-        if(liveBurst.length<5 && now-lastGrab>160){ liveBurst.push(grab("look")); lastGrab=now; }
+        if(s.sharp>score){ score=s.sharp; best=grab(null,{selfie:true}); }
+        if(liveBurst.length<3 && now-lastGrab>180){ liveBurst.push(grab("look")); lastGrab=now; }
       }
       await sleep(60);
     }
-    return best || grab(null);
+    return best || grab(null,{selfie:true});
   }
 
-  function grab(action){
-    const W=480, H=640;                          // smaller frames keep payload < 6MB
+  function grab(action, opts){
+    // TWO TIERS to minimise payload:
+    //  • selfie (opts.selfie): the frame used for face-match + the server's single-frame
+    //    passive PAD (run on frames[0]) — keep it crisp (480x640 @ q0.82).
+    //  • proving frames (everything else): the multi-frame MOTION engine only needs a
+    //    detectable face + movement, and it upscales/pads server-side, so ship them
+    //    small (384x512 @ q0.55) — ~70% lighter than the old 480x640 @ q0.92.
+    const selfie = !!(opts && opts.selfie);
+    const W = selfie ? 480 : 384, H = selfie ? 640 : 512;
+    const q = selfie ? 0.82 : 0.55;
     const c=document.createElement("canvas"); c.width=W; c.height=H;
     const x=c.getContext("2d");
-    // Aspect-preserving CENTER-CROP (cover) — phones rarely deliver exactly 3:4,
-    // so drawing the whole frame into 480x640 would STRETCH the face. Crop the
-    // centre 3:4 region instead: matches the live preview (object-fit:cover) and,
-    // crucially, sends an undistorted face to the liveness/anti-spoof/match engine.
+    // Aspect-preserving CENTER-CROP (cover), phones rarely deliver exactly 3:4,
+    // so drawing the whole frame would STRETCH the face. Crop the centre 3:4 region:
+    // matches the live preview (object-fit:cover) and sends an undistorted face.
     const vw=video.videoWidth||W, vh=video.videoHeight||H;
     const scale=Math.max(W/vw, H/vh);
     const sw=W/scale, sh=H/scale;                // source rect (3:4) to sample
     const sx=(vw-sw)/2, sy=(vh-sh)/2;            // centred
     x.translate(W,0); x.scale(-1,1);             // mirror to match preview + detection
     x.drawImage(video, sx, sy, sw, sh, 0, 0, W, H);
-    return { image_b64:c.toDataURL("image/jpeg",0.92).split(",")[1], proves_action:action };
+    return { image_b64:c.toDataURL("image/jpeg",q).split(",")[1], proves_action:action };
   }
 
   // ---- result card -------------------------------------------------------
   // The verdict lives on the stage (photo + outcome). Here we keep ONLY a
   // collapsible raw-JSON view for anyone who wants the full evidence.
   function showResult(r, risk, ms){
+    captureBrightnessOff();   // capture done -> restore the user's screen brightness
     try{ const sr=document.getElementById('stepResult'); if(sr) sr.className=(r.outcome==='live'?'done':'on'); }catch{}
     const payload = risk ? {...r, risk} : r;
     postToHost({type:"liveness", outcome:r.outcome, is_live:r.is_live, score:r.score, took_ms:flowElapsed()||null,
       selfie_image: r.selfie_image || lastShapedImages.selfie_image || null,
       liveliness_images: r.liveliness_images || lastShapedImages.liveliness_images || [],
+      // Client-collected device + network signals (consent-gated). The SERVER stores
+      // these in the decision record too; echoed here for the integrator's convenience.
+      device: lastDeviceContext?.device || null,
+      network: lastDeviceContext?.network || null,
+      location: lastDeviceContext?.location || null,
       result:payload});
     // Native SDK consumers receive the signed JSON via postToHost above and render
-    // their own UI — they don't want the demo's result card. Bail before drawing it.
+    // their own UI, they don't want the demo's result card. Bail before drawing it.
     if(_nativeSDK) return;
     const json = JSON.stringify(payload,null,2);
-    const scorePct = (r.score!=null) ? Math.round(r.score*100)+"%" : "—";
+    const scorePct = (r.score!=null) ? Math.round(r.score*100)+"%" : ",";
     const gen = r.face_genuineness || "";
     const genColor = gen==="GENUINE" ? "var(--ok,#22a447)" : gen ? "var(--red,#dc3545)" : "inherit";
     const vectors = (r.attack_indicators||[]).map(i=>i.vector||i).filter(Boolean);
@@ -1887,21 +1935,22 @@
         cp.classList.add("done"); cp.title="Copied ✓"; setTimeout(()=>{cp.classList.remove("done");cp.title="Copy JSON";},1400);
       }catch{} };
   }
-  function showError(e){ $("result").innerHTML=`<div class="card"><span class="badge b-error">ERROR</span>
+  function showError(e){ captureBrightnessOff();   // restore brightness on failure too
+    $("result").innerHTML=`<div class="card"><span class="badge b-error">ERROR</span>
     <pre style="white-space:pre-wrap;margin-top:10px">${String(e)}</pre></div>`; $("result").style.display="block"; }
   // Turn raw server/SDK errors into one human sentence (never show JSON/jargon to users).
   function friendlyError(e){
     const m=String((e&&e.message)||e||"");
     if(m==="__OFFLINE__" || isOffline(e))
-      return "You're offline. The challenge ran on your device — connect to the internet to finish verifying.";
+      return "You're offline. The challenge ran on your device, connect to the internet to finish verifying.";
     if(/Annex\s*A2|image quality|quality below|file_size|too dark|blurr?y/i.test(m))
       return "Your photo was too dark or low-quality. Move to brighter, even lighting and try again.";
     if(/no face|clear face|face the camera|within the frame/i.test(m))
-      return "Couldn't get a clear face — face the camera in good light and try again.";
+      return "Couldn't get a clear face, face the camera in good light and try again.";
     if(/didn'?t catch|retry/i.test(m) && !/[{}]/.test(m)) return m;   // already a friendly thrown message
     if(/[{}]|detail|findings|\b4\d\d\b|network|fetch|timeout/i.test(m))
       return "We couldn't complete the check. Please retry in good lighting.";
-    return m || "Something went wrong — please try again.";
+    return m || "Something went wrong, please try again.";
   }
 
   const scopes=()=>[$("scope-device").checked?"device_signals":null,$("scope-loc").checked?"precise_location":null].filter(Boolean);
@@ -1911,22 +1960,8 @@
   // actually needed (failed / referred / error).
   function hideRetry(){ $("start").style.display="none"; }
   function showRetry(){ $("start").style.display=""; $("start").disabled=false; $("start").textContent="Retry"; }
-  // Brief animated intro shown OVER the stage while the camera warms up — auto-fades
-  // (~1.9s CSS), tap to skip, disable with ?intro=0. Non-blocking: the camera starts
-  // underneath immediately, so it adds ~no real delay.
-  function showIntro(){
-    try{
-      if(new URLSearchParams(location.search).get("intro")==="0") return;
-      const el=$("intro"); if(!el) return;
-      el.style.display="flex"; el.classList.add("show");
-      const done=()=>{ el.classList.remove("show"); el.style.display="none"; el.removeEventListener("click",done); };
-      el.addEventListener("click", done);     // tap to skip
-      setTimeout(done, 2400);                  // fully remove after the fade-out
-    }catch(_){}
-  }
   async function runFlow(){
     hideRetry(); $("result").style.display="none"; $("guide").style.display="flex";
-    showIntro();   // animated "what you'll do" while the camera initializes
     $("ring").style.display=""; $("ovalbox").style.borderColor="#e6eaed"; _ring.disp=0; hideCheck();   // reset
     $("shot").classList.remove("show");   // back to live camera
     motionBuf = []; _lastMotion = 0;      // fresh motion-frame buffer for this run
@@ -1937,23 +1972,13 @@
       setPrompt("position"); setRing(0, COLOR.idle);
       // camera
       const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:facingConstraint(),width:{ideal:720},height:{ideal:960}},audio:false});
-      video.srcObject=stream;
-      // ROBUST PLAY: in some Android WebViews the first play() rejects (or never
-      // starts), leaving a grey oval with the ▶ overlay. Retry play() on the media
-      // events AND poll for a few seconds until frames actually flow — the overlay
-      // only ever shows while the <video> is paused, so we make sure it isn't.
-      const _kick = ()=>{ try{ video.play().catch(()=>{}); }catch(_){} };
-      _kick();
-      ["loadedmetadata","loadeddata","canplay","pause","stalled","suspend"].forEach(ev=>video.addEventListener(ev,_kick));
-      let _pk=0; const _pkT=setInterval(()=>{ if(video.paused) _kick();
-        if(++_pk>20 || (video.readyState>=2 && !video.paused)) clearInterval(_pkT); }, 250);
-      startOrientation();   // begin reading phone tilt (rejects phone-tilt cheating on up/down)
+      video.srcObject=stream; await playVideoReliably(video);   // force playback -> no paused play-icon overlay
       setPrompt("position","Focusing…"); await settleFocus();   // wait for sharp focus -> far fewer PAD/quality false-fails
       startVideoRec(stream);   // capture the attempt for review evidence
       // The on-device MediaPipe engine is ONLY for live coaching + action detection.
       // The real liveness decision is made server-side (compare_v2 multi-frame
       // motion), so we must NEVER hard-block the flow on it. iOS WebViews routinely
-      // stall loading the 9MB WASM — give the engine a short head start, then fall
+      // stall loading the 9MB WASM, give the engine a short head start, then fall
       // back to a MediaPipe-free guided capture and let the server decide.
       let mpReady = false;
       if(NATIVE_DETECT){
@@ -1978,7 +2003,7 @@
         }
       }
       clientLog("flow_start","info",
-        mpReady ? (workerReady ? "engine ready (worker)" : "engine ready") : "engine unavailable — timed-capture fallback",
+        mpReady ? (workerReady ? "engine ready (worker)" : "engine ready") : "engine unavailable, timed-capture fallback",
         {method: chosenMethod, ios: IS_IOS, worker: workerReady});
       // DIAGNOSTIC: a brief on-screen badge showing which detection engine is active,
       // so integrators can see at a glance whether native is really running (vs a silent
@@ -1987,17 +2012,21 @@
         : NATIVE_DETECT ? (IS_IOS ? "native · Apple Vision" : "native · MediaPipe Tasks")
         : IS_IOS ? "on-device · WASM Worker" : "on-device · WASM");
       looping=true; if(mpReady) loop();   // iOS runs detection in the Worker (off-thread); main-thread detectForVideo would hang
+      // Light the user's face for the WHOLE capture: force the screen to full
+      // brightness now and restore it on exit. (Luma-gated auto-dimming is unreliable
+      // because the camera auto-exposes, so the frame rarely reads as "dark".)
+      captureBrightnessOn();
 
-      // 1) SMART POSITIONING — coach distance / centering / lighting until stable
+      // 1) SMART POSITIONING, coach distance / centering / lighting until stable
       if(mpReady){
         let stable=0; const posT=performance.now();
-        while(stable<8){
+        while(stable<6){
           const f=latest, st=frameStats(); let big=null, sub="Fit your face in the oval";
           // No timed-capture failover: the flow uses REAL detection. If the engine
           // can't see a face within the window, fail loudly rather than silently
           // running a blind timer (so a broken engine is obvious, not masked).
           if(performance.now()-posT>25000)
-            throw new Error("Couldn't get a clear face — try better lighting and face the camera.");
+            throw new Error("Couldn't get a clear face, try better lighting and face the camera.");
           if(!f?.face){ big="Look at the camera"; sub="We can't see your face yet"; }
           else if(st.luma<55){ big="Find better light"; sub="Move somewhere brighter"; }
           else if(st.luma>225){ big="Too bright"; sub="Reduce backlight or glare"; }
@@ -2008,13 +2037,23 @@
           else if(Math.abs(f.pose.yaw)>18||Math.abs(f.pose.pitch)>22){ big="Face forward"; sub="Look straight at the camera"; }
           const ok = !big;
           coach(ok?"Hold still":big, ok?"Keep looking at the camera":sub);
-          setRing(stable/8*0.12, ok?COLOR.active:COLOR.idle);
-          stable = ok ? stable+1 : 0;               // require ~8 good frames in a row
-          await sleep(120);
+          setRing(stable/6*0.12, ok?COLOR.active:COLOR.idle);
+          // Make the OVAL itself react INSTANTLY every frame: green when the face is
+          // well-placed, red the moment it disappears, neutral while adjusting. This
+          // is the fast "smart" feedback the user sees, independent of the lock count.
+          const _o=$("ovalbox");
+          if(_o){
+            if(!f?.face){ _o.style.borderColor=COLOR.bad; _o.style.boxShadow=`0 0 18px ${COLOR.bad}`; }
+            else if(ok){ _o.style.borderColor=COLOR.active; _o.style.boxShadow=`0 0 ${(12+stable*4)}px ${COLOR.active}`; }
+            else { _o.style.borderColor="#e6eaed"; _o.style.boxShadow="none"; }
+          }
+          stable = ok ? stable+1 : 0;               // ~6 good frames in a row -> locks ~0.4s
+          if(stable>=6) break;
+          await sleep(70);                          // faster cadence -> snappier appear/disappear
         }
       }
       if(!mpReady){
-        // No on-device engine (or iOS watchdog tripped) — brief positioning beat,
+        // No on-device engine (or iOS watchdog tripped), brief positioning beat,
         // then proceed; the server validates the actual face + motion from frames.
         coach("Position your face","Hold your phone at eye level, good light");
         await sleep(700);
@@ -2036,6 +2075,7 @@
         ]);
         deviceContext=scopes().includes("device_signals")
           ? await collectDeviceContext({collectPreciseLocation:scopes().includes("precise_location"),appVersion:"demo-2.0"}) : undefined;
+        lastDeviceContext = deviceContext || lastDeviceContext;
         req=await client.openRequest({subjectId:$("subject").value, consentId,
           method:chosenMethod, deviceContext});
         challenge=await client.getChallenge(req.request_id);
@@ -2044,16 +2084,16 @@
 
       let result;
       if(challenge.spoken_prompt){
-        // 3a) SPOKEN challenge (face_number / face_voice) — read aloud.
+        // 3a) SPOKEN challenge (face_number / face_voice), read aloud.
         const isNum = challenge.method==="face_number";
         $("p-icon").textContent = isNum?"🔢":"🎤";
         // Warm the mic up and START capturing BEFORE the number appears, so the
         // user can never start reading into a dead mic. getUserMedia + recorder
-        // start have real latency — do that first, reveal the number after.
+        // start have real latency, do that first, reveal the number after.
         $("p-label").textContent = "Get ready…";
         $("p-hint").textContent = "Starting the mic…";
         setRing(0.30, COLOR.active);
-        // Spoken guidance WITHOUT the digits — never read the answer aloud (the
+        // Spoken guidance WITHOUT the digits, never read the answer aloud (the
         // phone's own voice would land in the mic). The server strips non-digits.
         speak(isNum ? "Read the numbers aloud when listening starts."
                     : "Read the phrase aloud when listening starts.");
@@ -2065,7 +2105,7 @@
         const recCtl = startRecorder(audioStream);
         const srCtl = startListen();
         await sleep(300);   // let the recorder/STT actually begin capturing
-        // Mic is LIVE — reveal the number and the "Listening" indicator together
+        // Mic is LIVE, reveal the number and the "Listening" indicator together
         // so the very first digit is always captured. The window auto-ends ~0.6s
         // after the user stops speaking.
         $("p-label").textContent = challenge.spoken_prompt;
@@ -2073,7 +2113,7 @@
         showMic(isNum ? "🎙 Listening… read the numbers" : "🎙 Listening… read the phrase");
         setRing(0.45, COLOR.active);
         const MINMS=5000, MAXMS=9000, t0=performance.now();   // don't cut the reader off
-        // While we listen, the face is on camera — sample liveness frames across
+        // While we listen, the face is on camera, sample liveness frames across
         // the window (every ~700ms) so we hand the engine a real selfie + 4-8
         // liveness frames, not just one still.
         const liveShots=[]; let _live=0;
@@ -2091,7 +2131,7 @@
         hideMic();
         // Top up to a minimum of 4 liveness frames if the window was short.
         while(liveShots.length<4){ const g=grab(null); if(!g?.image_b64) break; liveShots.push(g); }
-        const frames=[portrait, ...liveShots];
+        const frames=capFrames([portrait, ...liveShots], 30);   // server caps at 30 -> 422
         setRing(1, COLOR.active); setPrompt("verify");
         const videoB64=await stopVideoRec();
         result = await client.verifySpoken({ requestId:req.request_id, challenge, frames,
@@ -2099,64 +2139,85 @@
           audioPresent: (heard.supported && heard.transcript.trim().length>0) || !!audioB64,
           audioB64, videoB64 });
       } else {
-        // 3b) FACE-LIVENESS (active) — or HYBRID: a passive "just look" phase first.
+        // 3b) FACE-LIVENESS (active) / HYBRID. Hold Still is now ALWAYS the gate.
         const actions=challenge.actions;
-        const hybrid = (chosenMethod==="face_hybrid");
-        // portrait + the motion-frames (detectable faces spanning real movement)
-        // for the engine, then the action-proof frames for the challenge.
-        const frames=[portrait, ...selectMotionFrames()];
-        const steps = (hybrid?1:0) + actions.length || 1;
-        const seg=0.88/steps; let si=0;
-        if(hybrid){                              // passive analysis phase
+        // Hold Still + every action; steps drive the segmented progress ring.
+        const steps = 1 + actions.length;
+        const seg=0.88/steps;
+        // portrait + the motion-frames (detectable faces spanning real movement) for
+        // the engine; the action-proof frames are appended per run.
+        let frames;
+        // ---- PRESENCE LOCK (anti-spoof) -------------------------------------
+        // The SAME single face must stay in the oval continuously from Hold Still
+        // through the final action. If it leaves even briefly, captureAction throws
+        // PresenceLost: we cancel the current sequence and restart from Hold Still.
+        // No resume. A different face = a fresh hold. Defeats replay videos, printed
+        // photos, second-phone screens, multiple faces and mid-flow face swaps.
+        while(true){
+         try{
+          frames=[portrait, ...selectMotionFrames()];
+          let si=0;
+          // Hold Still gate: one centred face, held unbroken (and auto-brightness).
           setSegment(0.12 + si*seg, seg);
-          setPrompt("hold","Look at the camera, hold still");
-          frames.push(...await captureLook(2500));
+          setPrompt("hold","Hold still");
+          frames.push(...await captureLook(1200));   // shorter Hold Still (was 2500) — snappier
           setRing(0.12+(si+1)*seg, COLOR.ok); si++;
-        }
-        for(let i=0;i<actions.length;i++){
-          const a=actions[i]; setSegment(0.12 + si*seg, seg);
-          // "Get ready" beat: show the instruction + arrow, AND put the guide arc on
-          // the correct side (brand colour) from the start — so "Turn right" shows a
-          // RIGHT arc, not the leftover top/green arc from the previous step.
-          const _dd = setDir(a);
-          const o0 = $("ovalbox");
-          if(_dd!=null){
-            // Directional (turn / look): arc on the correct side, no oval glow.
-            if(o0){ o0.style.boxShadow="none"; o0.style.borderColor="#e6eaed"; }
-            setRing(0.16, COLOR.active, _dd);
-          } else {
-            // Blink / smile: no direction — the whole OVAL lights up (glow).
-            setRing(0, COLOR.active);
-            if(o0){ o0.style.borderColor=COLOR.active; o0.style.boxShadow=`0 0 20px ${COLOR.active}`; }
-          }
-          setPrompt(a, "Get ready… "+step(a).hint); await sleep(300);
-          let got=[];
-          if(mpReady){
-            // Real detection: WAIT for the user to actually perform the action.
-            // REAL detection on every engine path: wait for the user to actually
-            // perform the action (two passes), then fail loudly — no timed failover.
-            for(let attempt=0; attempt<2 && got.length===0; attempt++){
-              setPrompt(a, attempt? "↻ "+step(a).hint : step(a).hint);
-              got=await captureAction(a, 7000);
+          for(let i=0;i<actions.length;i++){
+            const a=actions[i]; setSegment(0.12 + si*seg, seg);
+            // "Get ready" beat: show the instruction + arrow, AND put the guide arc on
+            // the correct side (brand colour) from the start, so "Turn right" shows a
+            // RIGHT arc, not the leftover top/green arc from the previous step.
+            const _dd = setDir(a);
+            const o0 = $("ovalbox");
+            if(_dd!=null){
+              // Directional (turn / look): arc on the correct side, no oval glow.
+              if(o0){ o0.style.boxShadow="none"; o0.style.borderColor="#e6eaed"; }
+              setRing(0.16, COLOR.active, _dd);
+            } else {
+              // Blink / smile: no direction, the whole OVAL lights up (glow).
+              setRing(0, COLOR.active);
+              if(o0){ o0.style.borderColor=COLOR.active; o0.style.boxShadow=`0 0 20px ${COLOR.active}`; }
             }
-            if(got.length===0){ setRing(0.12+si*seg, COLOR.bad);
-              throw new Error(`Didn't catch "${step(a).label}". Please retry in good light.`); }
-          } else {
-            got=await timedCapture(a);   // engine genuinely unavailable: timed capture, server verifies motion
+            setPrompt(a, "Get ready, "+step(a).hint); await sleep(300);
+            let got=[];
+            if(mpReady){
+              // Real detection: WAIT for the user to actually perform the action.
+              // REAL detection on every engine path: wait for the user to actually
+              // perform the action (two passes), then fail loudly, no timed failover.
+              for(let attempt=0; attempt<2 && got.length===0; attempt++){
+                setPrompt(a, attempt? "↻ "+step(a).hint : step(a).hint);
+                got=await captureAction(a, 7000);
+              }
+              if(got.length===0){ setRing(0.12+si*seg, COLOR.bad);
+                throw new Error(`Didn't catch "${step(a).label}". Please retry in good light.`); }
+            } else {
+              got=await timedCapture(a);   // engine genuinely unavailable: timed capture, server verifies motion
+            }
+            frames.push(...got);
+            // Brief per-action acknowledgement (the big mark is saved for the END):
+            // a quick haptic tick + green flash + a ~2s rest before the next challenge.
+            cue();
+            setRing(0, COLOR.ok); setDir(null);
+            const ob=$("ovalbox"); if(ob){ ob.style.borderColor=COLOR.ok; ob.style.boxShadow=`0 0 16px ${COLOR.ok}`; }
+            // Replace the action title with a success state so it no longer says e.g.
+            // "Turn right" after the turn was accepted.
+            coach("Got it ✓", "Nice, hold on"); $("p-icon").textContent="✅"; await sleep(280);
+            if(ob){ ob.style.boxShadow="none"; ob.style.borderColor="#e6eaed"; } si++;
           }
-          frames.push(...got);
-          // Brief per-action acknowledgement (the big mark is saved for the END):
-          // a quick haptic tick + green flash + a ~2s rest before the next challenge.
-          cue();
-          setRing(0, COLOR.ok); setDir(null);
-          const ob=$("ovalbox"); if(ob){ ob.style.borderColor=COLOR.ok; ob.style.boxShadow=`0 0 16px ${COLOR.ok}`; }
-          // Replace the action title with a success state so it no longer says e.g.
-          // "Turn right" after the turn was accepted.
-          coach("Got it ✓", "Nice, hold on"); $("p-icon").textContent="✅"; await sleep(280);
-          if(ob){ ob.style.boxShadow="none"; ob.style.borderColor="#e6eaed"; } si++;
+          break;   // all actions completed with UNBROKEN single-face presence
+         }catch(e){
+          if(e && e.presence){
+            // Face left the oval mid-flow -> cancel and force a fresh Hold Still.
+            setDir(null); setRing(0, COLOR.bad);
+            const ob=$("ovalbox"); if(ob){ ob.style.borderColor="#e6eaed"; ob.style.boxShadow="none"; }
+            setPrompt("hold","Face left the oval, starting over"); $("p-icon").textContent="";
+            await sleep(900); continue;
+          }
+          throw e;   // genuine failure (e.g. action not caught) -> normal error path
+         }
         }
-        // Freeze the FINAL frame the user just saw (their last pose) in the oval —
-        // not the early portrait — then show ONE success mark while we verify.
+        // Freeze the FINAL frame the user just saw (their last pose) in the oval ,
+        // not the early portrait, then show ONE success mark while we verify.
         lastShot = grab(null).image_b64;
         $("shot").src="data:image/jpeg;base64,"+lastShot; $("shot").classList.add("show");
         setPrompt("verify"); $("ring").style.display="none"; showCheck();
@@ -2170,9 +2231,11 @@
             consentId = await client.grantConsent({subjectId:$("subject").value, signalScopes:scopes()});
             deviceContext=scopes().includes("device_signals")
               ? await collectDeviceContext({collectPreciseLocation:scopes().includes("precise_location"),appVersion:"demo-2.0"}) : undefined;
+            lastDeviceContext = deviceContext || lastDeviceContext;
             req = await client.openRequest({subjectId:$("subject").value, consentId, method:chosenMethod, deviceContext});
           }
           const attestationToken = await nativeAttestation(challenge.nonce);
+          frames = capFrames(frames, 30);   // server rejects > 30 frames (422)
           result = await client.verify({requestId:req.request_id, challenge, frames, videoB64, attestationToken,
             clientActions: offlineFlow ? challenge.actions : undefined,
             faceAttributes: lastFaceAttrs,     // §2.6 on-device geometry
@@ -2180,10 +2243,7 @@
         }catch(err){
           if(isOffline(err)){
             // OFFLINE: hand the captured frames to the native SDK for DEFERRED submit
-            // (/v1/offline/submit on reconnect). The verdict is delivered to the
-            // tenant's webhook. We return a "queued" result so the app knows it's pending.
-            // Native bridge: Android = FacededupNative.queueOffline(json); iOS =
-            // webkit.messageHandlers.facededupQueueOffline.postMessage(json).
+            // (/v1/offline/submit on reconnect); verdict delivered to the tenant webhook.
             const _android = window.FacededupNative && window.FacededupNative.queueOffline;
             const _ios = window.webkit && window.webkit.messageHandlers
                          && window.webkit.messageHandlers.facededupQueueOffline;
@@ -2197,17 +2257,15 @@
                 captured_at: new Date().toISOString(),
                 frames: (frames||[]).map(f => ({ image_b64: f.image_b64, proves_action: f.proves_action || null })),
               });
-              try{
-                if(_android) window.FacededupNative.queueOffline(payload);
-                else window.webkit.messageHandlers.facededupQueueOffline.postMessage(payload);
-              }catch(_e){}
+              try{ if(_android) window.FacededupNative.queueOffline(payload);
+                   else window.webkit.messageHandlers.facededupQueueOffline.postMessage(payload); }catch(_e){}
               result = { outcome:"queued", is_live:null, score:null, client_txn_id:txn,
                          queued_offline:true, selfie_image:null, liveliness_images:[] };
             } else { throw new Error("__OFFLINE__"); }
           } else { throw err; }
         }
-        // Keep the success mark on screen for a clear beat — even if verify was
-        // fast — so it reads as a moment, not a blink.
+        // Keep the success mark on screen for a clear beat, even if verify was
+        // fast, so it reads as a moment, not a blink.
         const _ce = performance.now() - _checkT0;
         verifyMs = Math.round(_ce);
         timing.capture = Math.max(0, Math.round(_checkT0 - flowStartT));   // challenge → frames ready
@@ -2226,11 +2284,11 @@
       // Enrol escalation: this run was the face+number attempt → submit for human
       // review and show the "Review in progress" screen instead of a verdict.
       if(enrollReviewMode){ await submitEnrollReview(portrait); return; }
-      // No full ring on the result — just tint the photo edge + hide the arc.
+      // No full ring on the result, just tint the photo edge + hide the arc.
       $("ring").style.display="none"; hideCheck();
       $("ovalbox").style.borderColor = result.outcome==="live"?COLOR.ok:result.outcome==="referred"?"var(--amber)":COLOR.bad;
       setPrompt(result.outcome==="live"?"position":"hold",
-        result.outcome==="live"?"Verified — you're live ✓":"Result: "+result.outcome);
+        result.outcome==="live"?"Verified, you're live ✓":"Result: "+result.outcome);
       $("p-icon").textContent = result.outcome==="live"?"✅":result.outcome==="referred"?"🕵️":"❌";
       $("guide").style.display="none"; $("pbar-wrap").style.display="none";
       // Freeze the captured selfie in the oval (instead of the live camera).
@@ -2385,7 +2443,7 @@
       docStream=await navigator.mediaDevices.getUserMedia({audio:false,
         video:{facingMode:{ideal:"environment"}, width:{ideal:1920}, height:{ideal:1080}}});
       v.srcObject=docStream; await v.play().catch(()=>{}); docCamLoop();
-    }catch(e){ hint.textContent="Camera unavailable — please allow camera access"; $("docShutter").disabled=true; }
+    }catch(e){ hint.textContent="Camera unavailable, please allow camera access"; $("docShutter").disabled=true; }
   }
   function docCamLoop(){
     const v=$("docVideo"), hint=$("docCamHint"), frame=$("docFrame"), ov=$("docDetect"), oc=ov.getContext("2d");
@@ -2419,11 +2477,11 @@
       $("docFrame").style.opacity = detected ? "0" : "1";
       // hint + auto-capture
       let msg, ok=false;
-      if(bright<55) msg="Too dark — find better light";
-      else if(bright>225) msg="Too bright — reduce glare";
-      else if(cvOn){ if(detected && focus>=7){ msg="Document detected — hold still"; ok=true; }
+      if(bright<55) msg="Too dark, find better light";
+      else if(bright>225) msg="Too bright, reduce glare";
+      else if(cvOn){ if(detected && focus>=7){ msg="Document detected, hold still"; ok=true; }
         else if(detected) msg="Hold steady…"; else msg="Point your camera at the document"; }
-      else { if(focus>=8){ msg="Looks good — hold still"; ok=true; } else msg="Fit the document in the frame"; }
+      else { if(focus>=8){ msg="Looks good, hold still"; ok=true; } else msg="Fit the document in the frame"; }
       hint.textContent=msg; hint.classList.toggle("ok",ok); frame.classList.toggle("ready",ok);
       if(ok){ _docGood++; if(_docGood>=3) captureDoc(); } else _docGood=0;
     }, 250);
@@ -2446,7 +2504,7 @@
     $("docCamHint").style.display="none"; $("docActions").style.display="none"; $("docRetake").style.display="flex";
     stopDocCam(); docReady();
   }
-  // Camera facing: "user" (selfie, default) or "environment" (Agent mode — the
+  // Camera facing: "user" (selfie, default) or "environment" (Agent mode, the
   // agent points the device's REAR camera at the customer). Preview/detection/
   // capture stay mirror-consistent either way, so turn-left/right never inverts.
   let preferredFacing = CONFIG.behavior.agentMode ? "environment" : "user";
@@ -2466,7 +2524,7 @@
     $("consent").style.display="none"; $("result").style.display="none";
     $("pbar-wrap").style.display="none"; setHeader(true);
     try{ stopDocCam(); }catch{}
-    try{ video.srcObject?.getTracks().forEach(t=>t.stop()); }catch{} looping=false; }
+    try{ video.srcObject?.getTracks().forEach(t=>t.stop()); }catch{} looping=false; captureBrightnessOff(); }
   function showConsent(){ stopDocCam(); hideSub(); $("select").style.display="none"; $("stage").style.display="none";
     $("result").style.display="none"; $("consent").style.display="block"; setHeader(false);
     (NATIVE_DETECT ? Promise.resolve() : IS_IOS ? preloadMPWorker() : preloadMP()).catch(()=>{}); }   // warm the engine (native Vision / Worker on iOS)
@@ -2545,18 +2603,18 @@
   }
   document.querySelectorAll('#select .opt').forEach(btn=>btn.onclick=()=>routeFlow(btn.dataset.flow));
   // Tester options: liveness strictness + agent mode (rear camera).
-  const STRICT_HINT = { lenient:"Lenient — quick, easiest to pass.",
-    standard:"Standard — balanced for real use.",
-    strict:"Strict — must reset to centre between actions; hardest to game." };
+  const STRICT_HINT = { lenient:"Lenient, quick, easiest to pass.",
+    standard:"Standard, balanced for real use.",
+    strict:"Strict, must reset to centre between actions; hardest to game." };
   document.querySelectorAll('#strictSeg button').forEach(b=>b.onclick=()=>{
     strictness=b.dataset.s;
     document.querySelectorAll('#strictSeg button').forEach(x=>x.classList.toggle("on", x===b));
     $("strictHint").textContent = STRICT_HINT[strictness]; });
   // Liveness method: Motion (on-device active challenge) vs Read numbers aloud
-  // (server issues 4 digits; we LISTEN — mic STT + audio anti-spoof — while the
+  // (server issues 4 digits; we LISTEN, mic STT + audio anti-spoof, while the
   // face is captured). Applies to every flow that runs the live check.
-  const METHOD_HINT = { face_liveness:"Motion — turn your head to the prompts.",
-    face_number:"Read numbers — say the digits shown aloud while we check your face." };
+  const METHOD_HINT = { face_liveness:"Motion, turn your head to the prompts.",
+    face_number:"Read numbers, say the digits shown aloud while we check your face." };
   document.querySelectorAll('#methodSeg button').forEach(b=>b.onclick=()=>{
     chosenMethod=b.dataset.m;
     document.querySelectorAll('#methodSeg button').forEach(x=>x.classList.toggle("on", x===b));
@@ -2573,7 +2631,7 @@
     if(c.branding.tagline){ const ht=document.querySelector(".hero-tag"); if(ht) ht.textContent=c.branding.tagline; }
     if(c.branding.logoUrl){ const hs=document.querySelector(".hero-shield");
       // SECURITY (VAPT F5): build via the DOM (src as a property, not parsed HTML)
-      // and only allow http(s) — prevents attribute-breakout XSS / javascript: URIs.
+      // and only allow http(s), prevents attribute-breakout XSS / javascript: URIs.
       if(hs){ try{ const u=new URL(c.branding.logoUrl, location.origin);
         if(u.protocol==="https:"||u.protocol==="http:"){
           hs.textContent=""; const im=document.createElement("img"); im.src=u.href; im.alt="";
@@ -2605,7 +2663,7 @@
     $("addrMapWrap").style.display="none"; $("addrMapFrame").removeAttribute("src");
     $("addrContinue").disabled=true; }
   function _updateAddrCta(){ $("addrContinue").disabled = $("addrInput").value.trim().length < 6; }
-  // Verified-location map preview — reliable OpenStreetMap embed (no key, no proxy).
+  // Verified-location map preview, reliable OpenStreetMap embed (no key, no proxy).
   function showAddrMap(lat,lon){ if(lat==null||lon==null){ $("addrMapWrap").style.display="none"; return; }
     const dx=0.004, bbox=[lon-dx,lat-dx,lon+dx,lat+dx].join(",");
     $("addrMapFrame").src=`https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik&marker=${lat},${lon}`;
@@ -2639,7 +2697,7 @@
   }
   async function pickPlace(s){
     hideAuto(); if(!s) return;
-    // OSM suggestions carry coordinates inline — no Place Details round-trip.
+    // OSM suggestions carry coordinates inline, no Place Details round-trip.
     if(s.lat!=null && s.lon!=null){ _setFromCoords(s.lat,s.lon,s.description); return; }
     if(s.description){ $("addrInput").value=s.description; _updateAddrCta(); }
     if(!s.place_id) return;
@@ -2671,8 +2729,8 @@
       err => { $("addrLoc").classList.remove("on"); $("addrLocLabel").textContent="Use my current location";
         $("addrLocStatus").className="locstatus";
         $("addrLocStatus").textContent = err.code===1
-          ? "Location permission denied — allow it to prove you're on-site."
-          : "Couldn't get your location — try again."; },
+          ? "Location permission denied, allow it to prove you're on-site."
+          : "Couldn't get your location, try again."; },
       { enableHighAccuracy:true, timeout:15000, maximumAge:0 });
   };
   // SMART: the moment we have GPS, derive the address + nearby landmarks so the
@@ -2723,7 +2781,7 @@
       $("addrPhotoBtn").classList.add("on"); $("addrPhotoLabel").textContent="Building photo captured ✓";
       $("addrPhotoStatus").className="locstatus ok"; $("addrPhotoStatus").textContent="📷 Photo ready"; };
     img.onerror=()=>{ URL.revokeObjectURL(url); $("addrPhotoStatus").className="locstatus";
-      $("addrPhotoStatus").textContent="Couldn't read that image — try again."; };
+      $("addrPhotoStatus").textContent="Couldn't read that image, try again."; };
     img.src=url;
   };
   $("addrContinue").onclick = submitAddress;
@@ -2766,7 +2824,7 @@
       <div class="prow"><span class="k">Digital address ID</span><span class="v"><b>${esc(ia.digital_address_id)}</b></span></div>
       <div class="prow"><span class="k">Postcode</span><span class="v">${esc(ia.postcode||"pending")}</span></div>
       <div class="prow"><span class="k">Authority</span><span class="v">${ia.provisional?"Provisional":esc(ia.authority)}</span></div>
-      ${ia.provisional?`<p class="meta" style="margin:6px 0 0;color:var(--muted)">Provisional — not NIPOST-issued yet.</p>`:""}
+      ${ia.provisional?`<p class="meta" style="margin:6px 0 0;color:var(--muted)">Provisional, not NIPOST-issued yet.</p>`:""}
     </div>` : "";
     // per-signal breakdown
     const sigs=(d.signals||[]).filter(s=>s.weight>0).map(s=>{
@@ -2840,7 +2898,7 @@
     q=(q||"").trim().toLowerCase();
     let html, list;
     if(!q){
-      // Smart default: detected country first, then a few common ones — NOT all 54.
+      // Smart default: detected country first, then a few common ones, NOT all 54.
       const guess=guessCountry();
       const order=[...new Set([guess,"NG","GH","KE","ZA","EG","ET"].filter(Boolean))]
         .filter(cc=>AF_COUNTRIES.some(x=>x.c===cc)).slice(0,7);
@@ -2863,7 +2921,7 @@
   function showIdKind(){ hideSub(); $("select").style.display="none"; $("result").style.display="none";
     $("stage").style.display="none"; $("consent").style.display="none"; $("ctryScreen").style.display="none";
     $("kindScreen").style.display="block"; setHeader(false);
-    $("kindSub").textContent = flag(chosenCountry)+"  "+countryName(chosenCountry)+" — choose how to verify.";
+    $("kindSub").textContent = flag(chosenCountry)+"  "+countryName(chosenCountry)+", choose how to verify.";
     const ids=idsFor(chosenCountry), nums=ids.filter(o=>o.t==="number"), docs=ids.filter(o=>o.t==="document");
     $("kindNumbersWrap").style.display = nums.length ? "block" : "none";
     $("kindDocsWrap").style.display = docs.length ? "block" : "none";
@@ -2905,9 +2963,9 @@
     try{
       const r=await fetch(API_BASE+"/v1/document/mrz",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({mrz})});
       const d=await r.json();
-      if(!r.ok){ $("docErr").style.color="var(--red)"; $("docErr").textContent=d.detail||"Couldn't read that MRZ — check the two lines."; $("docContinue").disabled=false; return; }
+      if(!r.ok){ $("docErr").style.color="var(--red)"; $("docErr").textContent=d.detail||"Couldn't read that MRZ, check the two lines."; $("docContinue").disabled=false; return; }
       if(!d.valid){ $("docErr").style.color="var(--red)";
-        $("docErr").textContent="MRZ check digits failed — re-type the two lines exactly."; $("docContinue").disabled=false; return; }
+        $("docErr").textContent="MRZ check digits failed, re-type the two lines exactly."; $("docContinue").disabled=false; return; }
       docMrz=mrz;                       // validated; carry into the liveness + verify step
       showConsent();                    // consent -> liveness -> face match
     }catch(e){ $("docErr").style.color="var(--red)"; $("docErr").textContent="Validation failed: "+(e.message||e); $("docContinue").disabled=false; }
@@ -2931,16 +2989,16 @@
       const badge = ok?'<span class="pmatch match">Authenticated ✓</span>'
                   : refer?'<span class="pmatch refer">Needs review</span>'
                   : '<span class="pmatch no_match">Not a match ✗</span>';
-      const scoreStr = (d.match_score==null) ? "—" : `${d.match_score}/100`;
+      const scoreStr = (d.match_score==null) ? "," : `${d.match_score}/100`;
       $("p-hint").textContent = ok?"Authenticated ✓":refer?"Needs review":"Not a match";
       speak(ok?"Authenticated.":refer?"Needs review.":"Not a match.");
       $("result").innerHTML=`<div class="pres">
-        <h2 class="pres-title">${ok?"Welcome back":refer?"Almost — needs review":"Authentication failed"}</h2>
+        <h2 class="pres-title">${ok?"Welcome back":refer?"Almost, needs review":"Authentication failed"}</h2>
         <div style="text-align:center;margin:-6px 0 14px">${badge}</div>
         <div class="pdetails">
           <div class="prow"><span class="k">Enrolment ID</span><span class="v">${d.enrollment_id||authEnrolId}</span></div>
           <div class="prow"><span class="k">Face match</span><span class="v">${scoreStr}</span></div>
-          <div class="prow"><span class="k">Decision</span><span class="v">${d.decision||"—"}</span></div>
+          <div class="prow"><span class="k">Decision</span><span class="v">${d.decision||","}</span></div>
           <div class="prow"><span class="k">Time taken</span><span class="v">${fmtMs(flowElapsed())}</span></div>
         </div>
         <button class="cta" id="presRestart">Done</button>
@@ -2971,7 +3029,7 @@
         <h2 class="pres-title">Face enrolled</h2>
         <div style="text-align:center;margin:-6px 0 14px"><span class="pmatch match">Enrolled ✓</span></div>
         <div class="pdetails">
-          <div class="prow"><span class="k">Enrolment ID</span><span class="v">${d.enrollment_id||"—"}</span></div>
+          <div class="prow"><span class="k">Enrolment ID</span><span class="v">${d.enrollment_id||","}</span></div>
           <div class="prow"><span class="k">Status</span><span class="v">${d.status||"enrolled"}</span></div>
           ${created?`<div class="prow"><span class="k">Created</span><span class="v">${created} UTC</span></div>`:""}
           ${timeRows()}
@@ -2980,7 +3038,7 @@
       </div>`;
       $("result").style.display="block"; $("presRestart").onclick=showSelect;
     }catch(e){
-      // Network/JS failure — no HTTP status. Show the reason + elapsed time.
+      // Network/JS failure, no HTTP status. Show the reason + elapsed time.
       if(enrollFailEscalate()) return;
       renderEnrollError(0, String(e&&e.message||e), Math.round(performance.now()-t0));
     }
@@ -3034,7 +3092,7 @@
     $("result").innerHTML=`<div class="pres">
       <div class="cs-shield" style="margin:2px auto 12px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5.5c0 4.3-3 7.3-7 8.5-4-1.2-7-4.2-7-8.5V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></div>
       <h2 class="pres-title" style="text-align:center">Review in progress</h2>
-      <p class="cs-sub" style="text-align:center">A specialist is confirming your details. This usually takes a few minutes — you can keep this screen open.</p>
+      <p class="cs-sub" style="text-align:center">A specialist is confirming your details. This usually takes a few minutes, you can keep this screen open.</p>
       <div id="rvTimer" style="text-align:center;font-size:38px;font-weight:800;font-variant-numeric:tabular-nums;color:var(--brand);margin:6px 0 12px">0:00</div>
       <div class="pdetails">
         <div class="prow"><span class="k">Reference</span><span class="v" id="rvRef">${ref}</span></div>
@@ -3064,7 +3122,7 @@
       <div class="bigcheck live" style="margin:0 auto 12px">✓</div>
       <h2 class="pres-title" style="text-align:center">You're verified</h2>
       <div style="text-align:center;margin:-4px 0 14px"><span class="pmatch match">Enrolled ✓</span></div>
-      <div class="pdetails"><div class="prow"><span class="k">Enrolment ID</span><span class="v">${d.enrollment_id||"—"}</span></div></div>
+      <div class="pdetails"><div class="prow"><span class="k">Enrolment ID</span><span class="v">${d.enrollment_id||","}</span></div></div>
       <button class="cta" id="presRestart">Done</button></div>`;
     $("result").style.display="block"; $("presRestart").onclick=showSelect;
   }
@@ -3085,7 +3143,7 @@
   }
   // Format a millisecond duration for display.
   function fmtMs(ms){ return ms<1000 ? `${ms} ms` : `${(ms/1000).toFixed(2)} s`; }
-  // End-to-end time: set when the challenge is issued, read when a result renders —
+  // End-to-end time: set when the challenge is issued, read when a result renders ,
   // so "Time taken" is the real challenge→final duration, not just the last fetch.
   let flowStartT = 0;
   function flowElapsed(){ return flowStartT ? Math.round(performance.now()-flowStartT) : 0; }
@@ -3241,7 +3299,7 @@
 
   $("consentContinue").onclick = () => { showStage(); runFlow(); };
   $("consentBack").onclick = showSelect;
-  $("back").onclick = showSelect;
+  { const _bk=$("back"); if(_bk) _bk.onclick = showSelect; }   // back button removed from the capture stage
   // Smart camera flip: re-acquire the other camera live, only committing if it
   // succeeds (so single-camera devices stay put). Mirroring is unchanged.
   async function flipCamera(){
@@ -3251,7 +3309,7 @@
         video:{ facingMode: next==="environment"?{ideal:"environment"}:"user",
                 width:{ideal:720}, height:{ideal:960} }, audio:false });
       video.srcObject?.getTracks().forEach(t=>t.stop());
-      video.srcObject=stream; await video.play(); startVideoRec(stream);
+      video.srcObject=stream; await playVideoReliably(video); startVideoRec(stream);
       preferredFacing = next;
       $("p-hint").textContent = next==="environment" ? "Rear camera" : "Front camera";
     }catch(e){ /* keep current camera */ }
@@ -3261,7 +3319,7 @@
   applyConfig(); // apply engineer config (branding + behavior defaults) on load
   // SDK direct start: when a flow is pre-selected (e.g. bank app wants liveness
   // straight from the camera), skip the menu and route into it on load.
-  // SDK / native launches go STRAIGHT into verification — engineers integrating the
+  // SDK / native launches go STRAIGHT into verification, engineers integrating the
   // SDK don't want the demo "Verify your identity" chooser. The menu only appears for
   // the browser demo (no native host) or when a flow is explicitly "select".
   // A per-tenant license key (host-injected window.__LICENSE_KEY OR the ?license=
@@ -3273,14 +3331,14 @@
   if(_nativeSDK){ CONFIG.ui.showSettings = false; if(CONFIG.ui.showBack !== true) CONFIG.ui.showBack = false; }
   // DEFAULT flow is now "liveness", so every normal/SDK launch goes STRAIGHT to the
   // camera. The chooser menu only appears when someone EXPLICITLY asks for it with
-  // ?flow=select (e.g. previewing the tester menu) — never by default.
+  // ?flow=select (e.g. previewing the tester menu), never by default.
   const _flow = CONFIG.behavior.flow || (_nativeSDK ? "liveness" : "select");
   if(_flow === "select"){ showSelect(); }
   else {
     try{ routeFlow(_flow); }
     catch(e){ console.warn("flow route failed", e);
       try{ clientLog("route_fail","error", String(e&&(e.message||e)).slice(0,200)); }catch(_){}
-      // Never dead-end an SDK launch on a route error — retry into the camera.
+      // Never dead-end an SDK launch on a route error, retry into the camera.
       if(_nativeSDK){ try{ showStage(); runFlow(); }catch(_2){ showSelect(); } } else { showSelect(); } }
   }
   (NATIVE_DETECT ? Promise.resolve() : IS_IOS ? preloadMPWorker() : preloadMP()).catch(()=>{});   // warm the face engine immediately (native Vision / Worker on iOS)
