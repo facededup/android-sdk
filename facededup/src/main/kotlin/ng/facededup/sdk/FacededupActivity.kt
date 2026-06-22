@@ -78,6 +78,33 @@ class FacededupActivity : AppCompatActivity() {
         override fun onAccuracyChanged(s: Sensor?, a: Int) {}
     }
 
+    // Device-motion liveness: a hand-held LIVE device has natural micro-tremor; a
+    // device on a tripod/stand (printed photo / screen replay) is unnaturally still.
+    // Accumulate linear-acceleration (gravity removed) magnitude -> RMS (in g), injected
+    // into window.__FACEDEDUP_NATIVE_SIGNALS.device for the server risk engine.
+    private var linearSensor: Sensor? = null
+    private var motionSumSq = 0.0
+    private var motionN = 0
+    private var lastMotionInject = 0L
+    private val motionListener = object : SensorEventListener {
+        override fun onSensorChanged(e: SensorEvent) {
+            val g = 9.80665
+            val mag = Math.sqrt((e.values[0] * e.values[0] + e.values[1] * e.values[1] + e.values[2] * e.values[2]).toDouble()) / g
+            motionSumSq += mag * mag; motionN += 1
+            val now = System.currentTimeMillis()
+            if (motionN >= 10 && now - lastMotionInject > 1500) {
+                lastMotionInject = now
+                val rms = Math.sqrt(motionSumSq / motionN)
+                val js = "window.__FACEDEDUP_NATIVE_SIGNALS=window.__FACEDEDUP_NATIVE_SIGNALS||{};" +
+                    "window.__FACEDEDUP_NATIVE_SIGNALS.device=window.__FACEDEDUP_NATIVE_SIGNALS.device||{};" +
+                    "window.__FACEDEDUP_NATIVE_SIGNALS.device.device_motion_rms=" + String.format("%.5f", rms) + ";" +
+                    "window.__FACEDEDUP_NATIVE_SIGNALS.device.device_motion_samples=" + motionN + ";"
+                web.evaluateJavascript(js, null)
+            }
+        }
+        override fun onAccuracyChanged(s: Sensor?, a: Int) {}
+    }
+
     private fun isOnline(): Boolean = try {
         val cm = getSystemService(CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
         val net = cm.activeNetwork
@@ -167,6 +194,7 @@ class FacededupActivity : AppCompatActivity() {
 
         sensorManager = getSystemService(SENSOR_SERVICE) as? SensorManager
         rotationSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+        linearSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION)
 
         val needCam = ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED
         val needMic = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED
@@ -177,11 +205,13 @@ class FacededupActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         rotationSensor?.let { sensorManager?.registerListener(orientListener, it, SensorManager.SENSOR_DELAY_GAME) }
+        linearSensor?.let { sensorManager?.registerListener(motionListener, it, SensorManager.SENSOR_DELAY_GAME) }
     }
 
     override fun onPause() {
         super.onPause()
         sensorManager?.unregisterListener(orientListener)
+        sensorManager?.unregisterListener(motionListener)
     }
 
     private fun loadFlow() {
