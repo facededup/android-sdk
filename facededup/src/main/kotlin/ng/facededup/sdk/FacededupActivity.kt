@@ -155,6 +155,14 @@ class FacededupActivity : AppCompatActivity() {
                 val pw = password
                 if (!pw.isNullOrEmpty()) handler.proceed("swiftend", pw) else handler.cancel()
             }
+
+            // Inject NATIVE device/fraud signals (Build.*, root, app hash, memory, …) the
+            // browser can't see; the web SDK's collectDeviceContext() merges them from
+            // window.__FACEDEDUP_NATIVE_SIGNALS (set well before the verify/submit call).
+            override fun onPageFinished(view: WebView, url: String) {
+                val json = runCatching { DeviceSignals.collect(this@FacededupActivity) }.getOrNull()
+                if (json != null) view.evaluateJavascript("window.__FACEDEDUP_NATIVE_SIGNALS=$json;", null)
+            }
         }
 
         sensorManager = getSystemService(SENSOR_SERVICE) as? SensorManager
