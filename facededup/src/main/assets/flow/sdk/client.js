@@ -38,18 +38,11 @@ export class LivenessClient {
     constructor(opts) {
         this.base = opts.baseUrl.replace(/\/$/, "");
         this.f = opts.fetchImpl ?? fetch.bind(globalThis);
-        this.lic = opts.licenseKey;
-    }
-    headers() {
-        const h = { "content-type": "application/json" };
-        if (this.lic)
-            h["X-License-Key"] = this.lic;
-        return h;
     }
     async post(path, body) {
         const res = await this.f(`${this.base}${path}`, {
             method: "POST",
-            headers: this.headers(),
+            headers: { "content-type": "application/json" },
             body: JSON.stringify(body),
         });
         if (!res.ok) {
