@@ -774,7 +774,7 @@
     (e.message||"")+" @ "+((e.filename||"").split("/").pop())+":"+(e.lineno||"")));
   window.addEventListener("unhandledrejection", e=> clientLog("unhandledrejection","error",
     String((e.reason&&(e.reason.stack||e.reason.message))||e.reason)));
-  const DEMO_BUILD = "2026-06-22-ios-bright-fix-1";   // bump each demo deploy -> proves which build a device actually runs
+  const DEMO_BUILD = "2026-06-23-blackframe-1";   // bump each demo deploy -> proves which build a device actually runs
   // SECURITY (VAPT F3): never log the license key, redact it from the query string.
   const _safeSearch = (location.search||"").replace(/(license|apiBase)=[^&]*/gi, "$1=REDACTED").slice(0,200);
   clientLog("session","info","demo loaded "+DEMO_BUILD, {build: DEMO_BUILD, search:_safeSearch});
@@ -1406,7 +1406,11 @@
   // The server rejects > 30 frames (422). Keep the portrait + every action-proof
   // frame (the challenge evidence), then fill the rest with look/motion frames.
   function capFrames(frames, max){
-    const f = (frames||[]).filter(Boolean);
+    let f = (frames||[]).filter(Boolean).filter(x=>x.image_b64);
+    // Drop black/unpainted frames (WebView glitches at transitions) so they never
+    // reach the engine or the stored evidence — but never end up with zero frames.
+    const nonBlack = f.filter(x=>!x.black);
+    if(nonBlack.length) f = nonBlack;
     if(f.length <= max) return f;
     const isAction = x => x && x.proves_action && x.proves_action !== "look";
     const head = f[0] ? [f[0]] : [];
@@ -1890,7 +1894,19 @@
     const sx=(vw-sw)/2, sy=(vh-sh)/2;            // centred
     x.translate(W,0); x.scale(-1,1);             // mirror to match preview + detection
     x.drawImage(video, sx, sy, sw, sh, 0, 0, W, H);
-    return { image_b64:c.toDataURL("image/jpeg",q).split(",")[1], proves_action:action };
+    // Black-frame guard: the WebView occasionally hands us an unpainted (all-black)
+    // frame at a transition / dropped frame. Sample a small grid; flag near-black so
+    // these are filtered out before upload (they pollute evidence + waste an engine
+    // slot). Camera not ready (no frame yet) also reads black here.
+    let black = false;
+    try{
+      const notReady = video.readyState < 2 || !video.videoWidth;
+      const d = x.getImageData(W*0.25|0, H*0.25|0, W*0.5|0, H*0.5|0).data;
+      let sum=0; for(let i=0;i<d.length;i+=4) sum += d[i]+d[i+1]+d[i+2];
+      const meanLuma = sum / (d.length/4) / 3;
+      black = notReady || meanLuma < 10;         // ~0..255; <10 = effectively black
+    }catch(_e){}
+    return { image_b64:c.toDataURL("image/jpeg",q).split(",")[1], proves_action:action, black };
   }
 
   // ---- result card -------------------------------------------------------
@@ -2242,8 +2258,6 @@
             padStrict: strictness==="strict"});  // strict profile -> server PAD model gates
         }catch(err){
           if(isOffline(err)){
-            // OFFLINE: hand the captured frames to the native SDK for DEFERRED submit
-            // (/v1/offline/submit on reconnect); verdict delivered to the tenant webhook.
             const _android = window.FacededupNative && window.FacededupNative.queueOffline;
             const _ios = window.webkit && window.webkit.messageHandlers
                          && window.webkit.messageHandlers.facededupQueueOffline;
