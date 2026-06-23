@@ -774,7 +774,7 @@
     (e.message||"")+" @ "+((e.filename||"").split("/").pop())+":"+(e.lineno||"")));
   window.addEventListener("unhandledrejection", e=> clientLog("unhandledrejection","error",
     String((e.reason&&(e.reason.stack||e.reason.message))||e.reason)));
-  const DEMO_BUILD = "2026-06-23-quality-frames-1";   // bump each demo deploy -> proves which build a device actually runs
+  const DEMO_BUILD = "2026-06-23-sharp-filter-1";   // bump each demo deploy -> proves which build a device actually runs
   // SECURITY (VAPT F3): never log the license key, redact it from the query string.
   const _safeSearch = (location.search||"").replace(/(license|apiBase)=[^&]*/gi, "$1=REDACTED").slice(0,200);
   clientLog("session","info","demo loaded "+DEMO_BUILD, {build: DEMO_BUILD, search:_safeSearch});
@@ -1411,6 +1411,19 @@
     // reach the engine or the stored evidence — but never end up with zero frames.
     const nonBlack = f.filter(x=>!x.black);
     if(nonBlack.length) f = nonBlack;
+    // Drop MOTION-BLURRED frames: the engine scores every frame on passive sharpness
+    // (edge_density) + detection_confidence, so a blurry turn frame fails and drags the
+    // fused verdict to not_live even when the active motion passes. Keep frames within
+    // ~45% of the sharpest (relative -> adapts to lighting), but never fewer than 5 (the
+    // engine needs a few for inter-frame motion) -> then keep the top-5 sharpest.
+    if(f.some(x => typeof x.sharp === "number")){
+      const maxSharp = Math.max(0, ...f.map(x => x.sharp || 0));
+      if(maxSharp > 0){
+        const sharpEnough = f.filter(x => (x.sharp || 0) >= 0.45 * maxSharp);
+        f = sharpEnough.length >= 5 ? sharpEnough
+          : [...f].sort((a,b)=> (b.sharp||0) - (a.sharp||0)).slice(0, Math.max(5, sharpEnough.length));
+      }
+    }
     if(f.length <= max) return f;
     const isAction = x => x && x.proves_action && x.proves_action !== "look";
     const head = f[0] ? [f[0]] : [];
@@ -1962,15 +1975,24 @@
     // frame at a transition / dropped frame. Sample a small grid; flag near-black so
     // these are filtered out before upload (they pollute evidence + waste an engine
     // slot). Camera not ready (no frame yet) also reads black here.
-    let black = false;
+    // Black + SHARPNESS probe on the face region (centre 50%). Sharpness = mean
+    // gradient energy (focus proxy); a motion-blurred turn frame scores low. Both used
+    // to keep bad frames out of the upload — the engine's passive PAD (edge_density)
+    // fails on blur and drags a genuine capture to not_live.
+    let black = false, sharp = 0;
     try{
       const notReady = video.readyState < 2 || !video.videoWidth;
-      const d = x.getImageData(W*0.25|0, H*0.25|0, W*0.5|0, H*0.5|0).data;
-      let sum=0; for(let i=0;i<d.length;i+=4) sum += d[i]+d[i+1]+d[i+2];
-      const meanLuma = sum / (d.length/4) / 3;
-      black = notReady || meanLuma < 10;         // ~0..255; <10 = effectively black
+      const rw = (W*0.5)|0, rh = (H*0.5)|0;
+      const d = x.getImageData((W*0.25)|0, (H*0.25)|0, rw, rh).data;
+      const g = new Float32Array(rw*rh); let sum=0;
+      for(let i=0,p=0;i<d.length;i+=4,p++){ const y=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2]; g[p]=y; sum+=y; }
+      black = notReady || (sum/(rw*rh)) < 10;     // mean luma <10 = effectively black
+      let edge=0, n=0;
+      for(let yy=1;yy<rh-1;yy++) for(let xx=1;xx<rw-1;xx++){ const i=yy*rw+xx;
+        const gx=g[i]-g[i-1], gy=g[i]-g[i-rw]; edge += gx*gx + gy*gy; n++; }
+      sharp = n ? edge/n : 0;
     }catch(_e){}
-    return { image_b64:c.toDataURL("image/jpeg",q).split(",")[1], proves_action:action, black };
+    return { image_b64:c.toDataURL("image/jpeg",q).split(",")[1], proves_action:action, black, sharp };
   }
 
   // ---- result card -------------------------------------------------------
