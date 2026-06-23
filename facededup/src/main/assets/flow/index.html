@@ -774,7 +774,7 @@
     (e.message||"")+" @ "+((e.filename||"").split("/").pop())+":"+(e.lineno||"")));
   window.addEventListener("unhandledrejection", e=> clientLog("unhandledrejection","error",
     String((e.reason&&(e.reason.stack||e.reason.message))||e.reason)));
-  const DEMO_BUILD = "2026-06-23-images-1";   // bump each demo deploy -> proves which build a device actually runs
+  const DEMO_BUILD = "2026-06-23-images-2";   // bump each demo deploy -> proves which build a device actually runs
   // SECURITY (VAPT F3): never log the license key, redact it from the query string.
   const _safeSearch = (location.search||"").replace(/(license|apiBase)=[^&]*/gi, "$1=REDACTED").slice(0,200);
   clientLog("session","info","demo loaded "+DEMO_BUILD, {build: DEMO_BUILD, search:_safeSearch});
@@ -2012,15 +2012,22 @@
     captureBrightnessOff();   // capture done -> restore the user's screen brightness
     try{ const sr=document.getElementById('stepResult'); if(sr) sr.className=(r.outcome==='live'?'done':'on'); }catch{}
     const payload = risk ? {...r, risk} : r;
+    const _self = r.selfie_image || lastShapedImages.selfie_image || null;
+    const _live = r.liveliness_images || lastShapedImages.liveliness_images || [];
+    // Surface images ONCE at the top level; strip the heavy duplicates from the nested
+    // `result` so the JSON handed to the native bridge stays small (images were echoed 3x:
+    // top-level + result.selfie/liveliness + result.best_face_image -> a multi-MB string
+    // can fail/truncate crossing the Android onResult / iOS postMessage bridge).
+    const leanResult = {...payload, best_face_image:null, selfie_image:null, liveliness_images:[]};
     postToHost({type:"liveness", outcome:r.outcome, is_live:r.is_live, score:r.score, took_ms:flowElapsed()||null,
-      selfie_image: r.selfie_image || lastShapedImages.selfie_image || null,
-      liveliness_images: r.liveliness_images || lastShapedImages.liveliness_images || [],
+      selfie_image: _self,
+      liveliness_images: _live,
       // Client-collected device + network signals (consent-gated). The SERVER stores
       // these in the decision record too; echoed here for the integrator's convenience.
       device: lastDeviceContext?.device || null,
       network: lastDeviceContext?.network || null,
       location: lastDeviceContext?.location || null,
-      result:payload});
+      result:leanResult});
     // Native SDK consumers receive the signed JSON via postToHost above and render
     // their own UI, they don't want the demo's result card. Bail before drawing it.
     if(_nativeSDK) return;
