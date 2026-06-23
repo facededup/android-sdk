@@ -2420,7 +2420,19 @@
         if(enrollFails>=3){ await escalateEnrollToReview(); } else showRetry(); }
       else {
         const offline = String(e&&e.message)==="__OFFLINE__";   // a network drop isn't a challenge fail
-        if(!offline && maybeSwitchToNumber()) announceSwitchAndRetry(); else showRetry();
+        // Native SDK integrators receive exactly ONE terminal result and the host
+        // closes on it — so a verify error here MUST be reported as JSON, or their
+        // onResult / didFinish callback hangs forever with no data. (The bare-browser
+        // demo has no such host, so it keeps its in-page retry UX instead.)
+        if(_nativeSDK){
+          postToHost({ type:"liveness", outcome:"error", is_live:false, score:null,
+            error: offline ? "offline" : String(e&&(e.message||e)).slice(0,300),
+            error_code: offline ? "offline" : "verify_failed",
+            took_ms: flowElapsed()||null,
+            device: lastDeviceContext?.device||null, network: lastDeviceContext?.network||null,
+            location: lastDeviceContext?.location||null });
+        }
+        else if(!offline && maybeSwitchToNumber()) announceSwitchAndRetry(); else showRetry();
       } }
     finally{ hideMic(); $("guide").style.display="none"; $("pbar-wrap").style.display="none"; }
   }
