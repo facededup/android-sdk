@@ -774,7 +774,7 @@
     (e.message||"")+" @ "+((e.filename||"").split("/").pop())+":"+(e.lineno||"")));
   window.addEventListener("unhandledrejection", e=> clientLog("unhandledrejection","error",
     String((e.reason&&(e.reason.stack||e.reason.message))||e.reason)));
-  const DEMO_BUILD = "2026-06-23-sharp-filter-1";   // bump each demo deploy -> proves which build a device actually runs
+  const DEMO_BUILD = "2026-06-23-images-1";   // bump each demo deploy -> proves which build a device actually runs
   // SECURITY (VAPT F3): never log the license key, redact it from the query string.
   const _safeSearch = (location.search||"").replace(/(license|apiBase)=[^&]*/gi, "$1=REDACTED").slice(0,200);
   clientLog("session","info","demo loaded "+DEMO_BUILD, {build: DEMO_BUILD, search:_safeSearch});
@@ -1430,6 +1430,16 @@
     const out = [...head, ...f.filter((x,i)=> i>0 && isAction(x))];
     for(let i=1;i<f.length && out.length<max;i++){ if(!isAction(f[i])) out.push(f[i]); }
     return out.slice(0, max);
+  }
+  // Shape captured frames into the SDK result format { image_type, image:<base64> }
+  // RIGHT HERE in the flow, so image delivery to the host NEVER depends on whichever
+  // /sdk/client.js a given native build bundled (or on the verify path taken). grab()'s
+  // image_b64 is already raw base64 (no data: prefix). selfie = first frame, then up to 8.
+  function shapeFrames(frames){
+    const valid = (frames||[]).filter(f => f && f.image_b64);
+    const toP = f => ({ image_type:"image_type_2", image: f.image_b64 });
+    return { selfie_image: valid[0] ? toP(valid[0]) : null,
+             liveliness_images: valid.slice(1, 9).map(toP) };
   }
   function selectMotionFrames(){
     const b = motionBuf;
@@ -2238,6 +2248,7 @@
         // Top up to a minimum of 4 liveness frames if the window was short.
         while(liveShots.length<4){ const g=grab(null); if(!g?.image_b64) break; liveShots.push(g); }
         const frames=capFrames([portrait, ...liveShots], 30);   // server caps at 30 -> 422
+        lastShapedImages = shapeFrames(frames);   // images guaranteed to the host on ANY outcome
         setRing(1, COLOR.active); setPrompt("verify");
         const videoB64=await stopVideoRec();
         result = await client.verifySpoken({ requestId:req.request_id, challenge, frames,
@@ -2342,6 +2353,7 @@
           }
           const attestationToken = await nativeAttestation(challenge.nonce);
           frames = capFrames(frames, 30);   // server rejects > 30 frames (422)
+          lastShapedImages = shapeFrames(frames);   // images guaranteed to the host on ANY outcome (success / error / queued)
           result = await client.verify({requestId:req.request_id, challenge, frames, videoB64, attestationToken,
             clientActions: offlineFlow ? challenge.actions : undefined,
             faceAttributes: lastFaceAttrs,     // §2.6 on-device geometry
@@ -2354,7 +2366,7 @@
               const txn = "off_"+Date.now()+"_"+Math.floor(Math.random()*1e6);
               const payload = JSON.stringify({ subject_id: $("subject").value || "user", method: chosenMethod || "face_liveness", client_actions: (challenge && challenge.actions) || [], client_txn_id: txn, captured_at: new Date().toISOString(), frames: (frames||[]).map(f => ({ image_b64: f.image_b64, proves_action: f.proves_action || null })) });
               try{ if(_android) window.FacededupNative.queueOffline(payload); else window.webkit.messageHandlers.facededupQueueOffline.postMessage(payload); }catch(_e){}
-              result = { outcome:"queued", is_live:null, score:null, client_txn_id:txn, queued_offline:true, selfie_image:null, liveliness_images:[] };
+              result = { outcome:"queued", is_live:null, score:null, client_txn_id:txn, queued_offline:true, selfie_image:(shapeFrames(frames).selfie_image), liveliness_images:(shapeFrames(frames).liveliness_images) };
             } else { throw new Error("__OFFLINE__"); }
           } else { throw err; }
         }
@@ -2369,8 +2381,11 @@
       // Expose the SDK result for integrators: it now carries `selfie_image`
       // (1) + `liveliness_images` (4-8), shaped { image_type, image:<base64> }
       // for the downstream face-compare/liveness engine.
-      lastShapedImages = { selfie_image: result.selfie_image || null,
-                           liveliness_images: result.liveliness_images || [] };
+      // Prefer the verify result's images, but NEVER drop back to empty — fall back to
+      // the frames we shaped at capture time (set above), so the host always gets them.
+      lastShapedImages = { selfie_image: result.selfie_image || lastShapedImages.selfie_image || null,
+                           liveliness_images: (result.liveliness_images && result.liveliness_images.length)
+                             ? result.liveliness_images : lastShapedImages.liveliness_images || [] };
       try{ window.facededupResult = result;
         console.info("facededup verify result", { outcome: result.outcome,
           selfie_image: !!result.selfie_image,
@@ -2399,14 +2414,14 @@
       else if(flowMode==="enroll"){           // enrol liveness did NOT pass → count it
         enrollFails++;
         if(enrollFails>=3){ await escalateEnrollToReview(); }
-        else { showResult(result, req.risk, verifyMs); showRetry(); }
+        else { showResult(result, req?.risk, verifyMs); showRetry(); }
       }
       else if(result.outcome==="live" && chosenLookup==="enroll_auth"){ await authEnrolAndRender(portrait.image_b64); }
       else if(result.outcome==="live" && chosenLookup==="document"){ await docVerifyAndRender(portrait.image_b64); }
       else if(result.outcome==="live" && chosenLookup!=="none"){ await lookupAndRender(portrait.image_b64); }
       // The enroll/identity/document cards render their OWN Done/Restart button, so
       // only the plain-liveness path needs the stage-level Retry/Done.
-      else { showResult(result, req.risk, verifyMs);
+      else { showResult(result, req?.risk, verifyMs);
         if(maybeSwitchToNumber()) announceSwitchAndRetry(); else showRetry(); }
     }catch(e){ $("ring").style.display="none"; hideCheck();
       { const shot = lastShot || portrait?.image_b64;
@@ -2429,6 +2444,8 @@
             error: offline ? "offline" : String(e&&(e.message||e)).slice(0,300),
             error_code: offline ? "offline" : "verify_failed",
             took_ms: flowElapsed()||null,
+            selfie_image: lastShapedImages.selfie_image || null,
+            liveliness_images: lastShapedImages.liveliness_images || [],
             device: lastDeviceContext?.device||null, network: lastDeviceContext?.network||null,
             location: lastDeviceContext?.location||null });
         }
