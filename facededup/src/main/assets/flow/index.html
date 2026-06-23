@@ -774,7 +774,7 @@
     (e.message||"")+" @ "+((e.filename||"").split("/").pop())+":"+(e.lineno||"")));
   window.addEventListener("unhandledrejection", e=> clientLog("unhandledrejection","error",
     String((e.reason&&(e.reason.stack||e.reason.message))||e.reason)));
-  const DEMO_BUILD = "2026-06-23-blackframe-1";   // bump each demo deploy -> proves which build a device actually runs
+  const DEMO_BUILD = "2026-06-23-quality-frames-1";   // bump each demo deploy -> proves which build a device actually runs
   // SECURITY (VAPT F3): never log the license key, redact it from the query string.
   const _safeSearch = (location.search||"").replace(/(license|apiBase)=[^&]*/gi, "$1=REDACTED").slice(0,200);
   clientLog("session","info","demo loaded "+DEMO_BUILD, {build: DEMO_BUILD, search:_safeSearch});
@@ -1852,6 +1852,70 @@
   let liveBurst = [];
   // Pick the sharpest, most-frontal portrait from a short burst (and collect the
   // frontal burst for the engine along the way).
+
+  // ---- Quality-gated frame selection --------------------------------------
+  // Capture 20 candidates (~100ms apart, ~2s), score each by SHARPNESS (Laplacian
+  // variance) + BRIGHTNESS (mean luma) + FACE AREA, reject if < 3 pass the quality
+  // floor ("try again, better light"), then send the top 5 SHARPEST spaced >=300ms
+  // apart (preserves real motion for the multi-frame engine). Thresholds are
+  // configurable via <body data-min-luma / data-min-sharp / data-min-face / ...>.
+  class QualityLow extends Error { constructor(){ super("QUALITY_LOW"); this.qualityLow = true; } }
+  const _qc = document.createElement("canvas"); _qc.width = 96; _qc.height = 96;
+  const _qx = _qc.getContext("2d", { willReadFrequently: true });
+  // Laplacian-variance (focus) + mean luma on a 96x96 grayscale probe (<5ms/frame).
+  function frameQuality(){
+    const vw = video.videoWidth||96, vh = video.videoHeight||96;
+    const s = Math.max(96/vw, 96/vh), sw = 96/s, sh = 96/s, sx = (vw-sw)/2, sy = (vh-sh)/2;
+    try{ _qx.drawImage(video, sx, sy, sw, sh, 0, 0, 96, 96); }catch(_e){ return { sharp:0, luma:0 }; }
+    const d = _qx.getImageData(0,0,96,96).data, W=96, H=96;
+    const g = new Float32Array(W*H); let lumaSum=0;
+    for(let i=0,p=0;i<d.length;i+=4,p++){ const y=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2]; g[p]=y; lumaSum+=y; }
+    let sum=0, sum2=0, n=0;
+    for(let y=1;y<H-1;y++) for(let x=1;x<W-1;x++){ const i=y*W+x;
+      const lap = 4*g[i]-g[i-1]-g[i+1]-g[i-W]-g[i+W]; sum+=lap; sum2+=lap*lap; n++; }
+    const mean = sum/n;
+    return { sharp: Math.max(0, sum2/n - mean*mean), luma: lumaSum/(W*H) };
+  }
+  function _qcfg(){
+    const ds = (document.body && document.body.dataset) || {};
+    const num = (k, dft) => { const v = parseFloat(ds[k]); return isFinite(v) ? v : dft; };
+    return { minSharp:num("minSharp",12), minLuma:num("minLuma",45), maxLuma:num("maxLuma",248),
+             minFace:num("minFace",0.26), count:20, keep:5, gapMs:300, minPass:3 };
+  }
+  async function captureQualityFrames(){
+    const cfg = _qcfg(); const cands = []; const t0 = performance.now();
+    for(let i=0;i<cfg.count;i++){
+      const q = frameQuality();
+      const face = (latest && latest.face && !latest.multi) ? (latest.coverage||0) : 0;
+      const fr = grab(null, { selfie:true });
+      cands.push({ t: performance.now()-t0, sharp:q.sharp, luma:q.luma, face, fr });
+      await sleep(100);
+    }
+    // Only gate on face area when on-device detection actually saw a face at some
+    // point (else timed-capture / no-engine devices would always fail the face floor).
+    const requireFace = cands.some(c => c.face > 0);
+    const pass = cands.filter(c => c.fr && c.fr.image_b64 && !c.fr.black
+      && c.sharp >= cfg.minSharp && c.luma >= cfg.minLuma && c.luma <= cfg.maxLuma
+      && (!requireFace || c.face >= cfg.minFace));
+    if(pass.length < cfg.minPass) throw new QualityLow();      // -> "try again, better light"
+    pass.sort((a,b)=> b.sharp - a.sharp);
+    const picked = [];
+    for(const c of pass){ if(picked.length>=cfg.keep) break;
+      if(picked.every(p => Math.abs(p.t - c.t) >= cfg.gapMs)) picked.push(c); }   // spaced >=300ms
+    for(const c of pass){ if(picked.length>=cfg.keep) break; if(!picked.includes(c)) picked.push(c); }  // top up
+    picked.sort((a,b)=> b.sharp - a.sharp);
+    return picked.map(c => c.fr);
+  }
+  // 20-candidate quality capture with one "better light" retry; sharpest frame first.
+  async function captureQualityGated(){
+    for(let attempt=0; attempt<2; attempt++){
+      coach("Hold still", attempt ? "Move somewhere brighter" : "Keep your face in the oval");
+      try{ return await captureQualityFrames(); }
+      catch(e){ if(e && e.qualityLow && attempt===0){ await sleep(700); continue; } throw e; }
+    }
+    throw new QualityLow();
+  }
+
   async function captureBestPortrait(ms){
     let best=null, score=-1; const t=performance.now(); let lastGrab=0;
     liveBurst = [];
@@ -1959,6 +2023,8 @@
     const m=String((e&&e.message)||e||"");
     if(m==="__OFFLINE__" || isOffline(e))
       return "You're offline. The challenge ran on your device, connect to the internet to finish verifying.";
+    if(m==="QUALITY_LOW" || (e && e.qualityLow))
+      return "Try again in better light — we couldn't capture enough sharp frames. Find even lighting and hold still.";
     if(/Annex\s*A2|image quality|quality below|file_size|too dark|blurr?y/i.test(m))
       return "Your photo was too dark or low-quality. Move to brighter, even lighting and try again.";
     if(/no face|clear face|face the camera|within the frame/i.test(m))
@@ -2080,15 +2146,17 @@
       //    generated on-device and the server is contacted only at submit. Spoken
       //    methods need the server now (the phrase/number is server-issued).
       const offlineFlow = (chosenMethod==="face_liveness" || chosenMethod==="face_hybrid");
-      let consentId, req, challenge, deviceContext;
+      let consentId, req, challenge, deviceContext, qframes = [];
       if(offlineFlow){
-        portrait = await captureBestPortrait(900);
+        qframes = await captureQualityGated();   // 20 candidates -> top 5 sharpest, quality-gated
+        portrait = qframes[0];
         challenge = makeClientChallenge();
       } else {
-        [portrait, consentId] = await Promise.all([
-          captureBestPortrait(900),
+        [qframes, consentId] = await Promise.all([
+          captureQualityGated(),
           client.grantConsent({subjectId:$("subject").value, signalScopes:scopes()}),
         ]);
+        portrait = qframes[0];
         deviceContext=scopes().includes("device_signals")
           ? await collectDeviceContext({collectPreciseLocation:scopes().includes("precise_location"),appVersion:"demo-2.0"}) : undefined;
         lastDeviceContext = deviceContext || lastDeviceContext;
@@ -2171,7 +2239,7 @@
         // photos, second-phone screens, multiple faces and mid-flow face swaps.
         while(true){
          try{
-          frames=[portrait, ...selectMotionFrames()];
+          frames=[...qframes, ...selectMotionFrames()];   // 5 quality-selected + motion frames
           let si=0;
           // Hold Still gate: one centred face, held unbroken (and auto-brightness).
           setSegment(0.12 + si*seg, seg);
@@ -2259,22 +2327,12 @@
         }catch(err){
           if(isOffline(err)){
             const _android = window.FacededupNative && window.FacededupNative.queueOffline;
-            const _ios = window.webkit && window.webkit.messageHandlers
-                         && window.webkit.messageHandlers.facededupQueueOffline;
+            const _ios = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.facededupQueueOffline;
             if(_android || _ios){
               const txn = "off_"+Date.now()+"_"+Math.floor(Math.random()*1e6);
-              const payload = JSON.stringify({
-                subject_id: $("subject").value || "user",
-                method: chosenMethod || "face_liveness",
-                client_actions: (challenge && challenge.actions) || [],
-                client_txn_id: txn,
-                captured_at: new Date().toISOString(),
-                frames: (frames||[]).map(f => ({ image_b64: f.image_b64, proves_action: f.proves_action || null })),
-              });
-              try{ if(_android) window.FacededupNative.queueOffline(payload);
-                   else window.webkit.messageHandlers.facededupQueueOffline.postMessage(payload); }catch(_e){}
-              result = { outcome:"queued", is_live:null, score:null, client_txn_id:txn,
-                         queued_offline:true, selfie_image:null, liveliness_images:[] };
+              const payload = JSON.stringify({ subject_id: $("subject").value || "user", method: chosenMethod || "face_liveness", client_actions: (challenge && challenge.actions) || [], client_txn_id: txn, captured_at: new Date().toISOString(), frames: (frames||[]).map(f => ({ image_b64: f.image_b64, proves_action: f.proves_action || null })) });
+              try{ if(_android) window.FacededupNative.queueOffline(payload); else window.webkit.messageHandlers.facededupQueueOffline.postMessage(payload); }catch(_e){}
+              result = { outcome:"queued", is_live:null, score:null, client_txn_id:txn, queued_offline:true, selfie_image:null, liveliness_images:[] };
             } else { throw new Error("__OFFLINE__"); }
           } else { throw err; }
         }
