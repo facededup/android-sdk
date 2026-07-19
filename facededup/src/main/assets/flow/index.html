@@ -88,6 +88,11 @@
     .guide i:nth-child(3){ animation-delay:.32s; }
     @keyframes gpulse{ 0%,80%,100%{ transform:scale(.6); opacity:.3; } 40%{ transform:scale(1); opacity:1; } }
     .controls{ margin-top:18px; display:flex; flex-direction:column; gap:10px; }
+    /* NINAuth brand footer — deliberately tiny + quiet */
+    .ninauth-mark{ display:flex; align-items:center; justify-content:center; gap:4px;
+      margin-top:14px; opacity:.72; user-select:none; }
+    .ninauth-mark .nin{ font-weight:700; font-size:11px; color:#17a05d; letter-spacing:.2px; }
+    .ninauth-mark .auth{ font-weight:700; font-size:11px; color:#17222e; letter-spacing:.2px; }
     button{ font:inherit; font-weight:700; padding:14px; border-radius:14px; border:0;
             background:var(--brand); color:#fff; cursor:pointer;
             transition:filter .12s ease, transform .12s ease; }
@@ -584,6 +589,14 @@
     <div class="cs-tip"><span class="tic ok"><svg viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg></span>Follow the guide on your screen.</div>
     <div class="cs-tip"><span class="tic no"><svg viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span>Don't wear hats, glasses or masks.</div>
     <button class="cta" id="consentContinue">Start Verification</button>
+    <div class="ninauth-mark" aria-label="NINAuth">
+      <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">
+        <path d="M4.5 16.5 A9 9 0 0 0 19.5 16.5" fill="none" stroke="#17a05d" stroke-width="2.4" stroke-linecap="round"/>
+        <circle cx="12" cy="10" r="8" fill="#17a05d"/>
+        <circle cx="12" cy="8.4" r="2.6" fill="#fff"/>
+        <rect x="10.9" y="9.6" width="2.2" height="5" rx="1.1" fill="#fff"/>
+      </svg><span class="nin">NIN</span><span class="auth">Auth</span>
+    </div>
   </div>
 
   <div class="stage" id="stage" style="display:none">
@@ -612,6 +625,15 @@
       <input type="hidden" id="subject" value="demo-user-1" />
       <input type="checkbox" id="scope-device" checked hidden />
       <input type="checkbox" id="scope-loc" hidden />
+    </div>
+    <!-- NINAuth brand footer — very small, quiet (matches the native SDK beta.56 mark) -->
+    <div class="ninauth-mark" aria-label="NINAuth">
+      <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">
+        <path d="M4.5 16.5 A9 9 0 0 0 19.5 16.5" fill="none" stroke="#17a05d" stroke-width="2.4" stroke-linecap="round"/>
+        <circle cx="12" cy="10" r="8" fill="#17a05d"/>
+        <circle cx="12" cy="8.4" r="2.6" fill="#fff"/>
+        <rect x="10.9" y="9.6" width="2.2" height="5" rx="1.1" fill="#fff"/>
+      </svg><span class="nin">NIN</span><span class="auth">Auth</span>
     </div>
   </div>
 
@@ -774,7 +796,7 @@
     (e.message||"")+" @ "+((e.filename||"").split("/").pop())+":"+(e.lineno||"")));
   window.addEventListener("unhandledrejection", e=> clientLog("unhandledrejection","error",
     String((e.reason&&(e.reason.stack||e.reason.message))||e.reason)));
-  const DEMO_BUILD = "2026-07-13-fast-submit";   // bump each demo deploy -> proves which build a device actually runs
+  const DEMO_BUILD = "2026-07-19-ninauth-mark";   // bump each demo deploy -> proves which build a device actually runs
   // SECURITY (VAPT F3): never log the license key, redact it from the query string.
   const _safeSearch = (location.search||"").replace(/(license|apiBase)=[^&]*/gi, "$1=REDACTED").slice(0,200);
   clientLog("session","info","demo loaded "+DEMO_BUILD, {build: DEMO_BUILD, search:_safeSearch});
