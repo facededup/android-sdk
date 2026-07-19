@@ -716,7 +716,6 @@
     if(p.has("method"))     c.behavior.method = p.get("method");
     if(p.has("strictness")) c.behavior.strictness = p.get("strictness");
     if(p.has("agent"))      c.behavior.agentMode = truthy(p.get("agent"));
-    if(p.has("lang"))       c.ui.language = p.get("lang");
     if(p.has("settings"))   c.ui.showSettings = !(p.get("settings")==="0" || p.get("settings")==="false");
     if(p.has("back"))       c.ui.showBack = !(p.get("back")==="0" || p.get("back")==="false");
     if(p.has("product"))    c.branding.productName = p.get("product");
@@ -804,7 +803,7 @@
     (e.message||"")+" @ "+((e.filename||"").split("/").pop())+":"+(e.lineno||"")));
   window.addEventListener("unhandledrejection", e=> clientLog("unhandledrejection","error",
     String((e.reason&&(e.reason.stack||e.reason.message))||e.reason)));
-  const DEMO_BUILD = "2026-07-19-settings-toggle-fix";   // bump each demo deploy -> proves which build a device actually runs
+  const DEMO_BUILD = "2026-07-19-remove-lang";   // bump each demo deploy -> proves which build a device actually runs
   // SECURITY (VAPT F3): never log the license key, redact it from the query string.
   const _safeSearch = (location.search||"").replace(/(license|apiBase)=[^&]*/gi, "$1=REDACTED").slice(0,200);
   clientLog("session","info","demo loaded "+DEMO_BUILD, {build: DEMO_BUILD, search:_safeSearch});
@@ -1109,7 +1108,7 @@
         m_number:["Ihu + Ọnụọgụ","Gụọ ọnụọgụ egosiri."],
         m_assisted:["Enyemaka","Ịchọrọ enyemaka? Onye nnọchi ga-enyere gị."] } },
   };
-  let curLang = (CONFIG.ui.language && I18N[CONFIG.ui.language]) ? CONFIG.ui.language : "en";
+  const curLang = "en";   // language pinned to English (the lang option was removed)
   const L = () => I18N[curLang] || I18N.en;
   function applyLang(){
     const u = L().ui;
