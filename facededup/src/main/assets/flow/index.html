@@ -774,7 +774,7 @@
     (e.message||"")+" @ "+((e.filename||"").split("/").pop())+":"+(e.lineno||"")));
   window.addEventListener("unhandledrejection", e=> clientLog("unhandledrejection","error",
     String((e.reason&&(e.reason.stack||e.reason.message))||e.reason)));
-  const DEMO_BUILD = "2026-06-23-images-2";   // bump each demo deploy -> proves which build a device actually runs
+  const DEMO_BUILD = "2026-07-13-fast-submit";   // bump each demo deploy -> proves which build a device actually runs
   // SECURITY (VAPT F3): never log the license key, redact it from the query string.
   const _safeSearch = (location.search||"").replace(/(license|apiBase)=[^&]*/gi, "$1=REDACTED").slice(0,200);
   clientLog("session","info","demo loaded "+DEMO_BUILD, {build: DEMO_BUILD, search:_safeSearch});
@@ -930,7 +930,12 @@
   const STRICT_NEED = { lenient:0.8, standard:1.0, strict:1.3 };
   // Bridge: when the flow is embedded in a native SDK (iOS WKScriptMessageHandler
   // "facededup" / Android JS interface "FacededupNative"), report the final result.
+  // The host (native SDK) must receive EXACTLY ONE terminal result per run — the
+  // first to arrive wins (normal completion OR the 90s watchdog). Reset per flow.
+  let _resultDelivered = false, _watchdogTimer = null;
   function postToHost(payload){
+    if(_resultDelivered) return; _resultDelivered = true;
+    clearTimeout(_watchdogTimer);
     try{ const s=JSON.stringify(payload);
       if(window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.facededup)
         window.webkit.messageHandlers.facededup.postMessage(s);
@@ -1411,21 +1416,30 @@
     // reach the engine or the stored evidence — but never end up with zero frames.
     const nonBlack = f.filter(x=>!x.black);
     if(nonBlack.length) f = nonBlack;
+    // An ACTION-proof frame carries the active-challenge evidence (turn/blink/etc).
+    const isAction = x => x && x.proves_action && x.proves_action !== "look";
     // Drop MOTION-BLURRED frames: the engine scores every frame on passive sharpness
-    // (edge_density) + detection_confidence, so a blurry turn frame fails and drags the
-    // fused verdict to not_live even when the active motion passes. Keep frames within
-    // ~45% of the sharpest (relative -> adapts to lighting), but never fewer than 5 (the
-    // engine needs a few for inter-frame motion) -> then keep the top-5 sharpest.
-    if(f.some(x => typeof x.sharp === "number")){
-      const maxSharp = Math.max(0, ...f.map(x => x.sharp || 0));
+    // (edge_density) + detection_confidence, so a blurry still frame drags the fused
+    // verdict down. CRUCIAL: this cull applies to NON-action frames ONLY — action
+    // frames are inherently blurry (the head is moving) and ARE the challenge proof;
+    // culling them dropped whole actions, so the server saw e.g. satisfied=2/3 and
+    // failed the active challenge for everyone. Keep every action frame; sharpness-
+    // filter only the rest (within ~45% of the sharpest, never fewer than 5).
+    const actions = f.filter(isAction);
+    let pool = f.filter(x => !isAction(x));
+    if(pool.some(x => typeof x.sharp === "number")){
+      const maxSharp = Math.max(0, ...pool.map(x => x.sharp || 0));
       if(maxSharp > 0){
-        const sharpEnough = f.filter(x => (x.sharp || 0) >= 0.45 * maxSharp);
-        f = sharpEnough.length >= 5 ? sharpEnough
-          : [...f].sort((a,b)=> (b.sharp||0) - (a.sharp||0)).slice(0, Math.max(5, sharpEnough.length));
+        const sharpEnough = pool.filter(x => (x.sharp || 0) >= 0.45 * maxSharp);
+        pool = sharpEnough.length >= 5 ? sharpEnough
+          : [...pool].sort((a,b)=> (b.sharp||0) - (a.sharp||0)).slice(0, Math.max(5, sharpEnough.length));
       }
     }
+    const survive = new Set([...actions, ...pool]);
+    f = f.filter(x => survive.has(x));     // preserve original capture order
     if(f.length <= max) return f;
-    const isAction = x => x && x.proves_action && x.proves_action !== "look";
+    // Over the cap: keep the first frame + EVERY action frame, then fill with the
+    // rest. (Action frames are the proof — never let the cap drop them.)
     const head = f[0] ? [f[0]] : [];
     const out = [...head, ...f.filter((x,i)=> i>0 && isAction(x))];
     for(let i=1;i<f.length && out.length<max;i++){ if(!isAction(f[i])) out.push(f[i]); }
@@ -1751,12 +1765,12 @@
     return f.coverage>0.22 && f.coverage<0.98 && Math.abs(f.cx-0.5)<0.32 && Math.abs(f.cy-0.46)<0.32;
   }
   let _absentSince = 0;
-  // Call every frame inside a challenge. Allow a tiny (220ms) grace for a dropped
+  // Call every frame inside a challenge. Allow a tiny (180ms) grace for a dropped
   // detection frame; beyond that the face has genuinely left -> abort + restart.
   function assertPresence(){
     if(faceHeldInOval(latest)){ _absentSince = 0; return; }
     if(!_absentSince) _absentSince = performance.now();
-    else if(performance.now() - _absentSince > 220) throw new PresenceLost();
+    else if(performance.now() - _absentSince > 180) throw new PresenceLost();
   }
 
   async function captureAction(action, ms){
@@ -1902,8 +1916,18 @@
   function _qcfg(){
     const ds = (document.body && document.body.dataset) || {};
     const num = (k, dft) => { const v = parseFloat(ds[k]); return isFinite(v) ? v : dft; };
+    // count = MAX candidates (the ceiling in poor light); minCount = floor before we
+    // allow the early-exit, so we still span enough time for `keep` spaced frames.
     return { minSharp:num("minSharp",12), minLuma:num("minLuma",45), maxLuma:num("maxLuma",248),
-             minFace:num("minFace",0.26), count:20, keep:5, gapMs:300, minPass:3 };
+             minFace:num("minFace",0.26), count:20, minCount:13, keep:5, gapMs:300, minPass:3 };
+  }
+  // How many frames can be selected at least `gapMs` apart (the spacing the engine
+  // needs to see real motion). Used to early-exit quality capture once satisfied.
+  function _spacedCount(list, gapMs){
+    const sorted = [...list].sort((a,b)=> a.t - b.t);
+    let n = 0, last = -1e9;
+    for(const c of sorted){ if(c.t - last >= gapMs){ n++; last = c.t; } }
+    return n;
   }
   async function captureQualityFrames(){
     const cfg = _qcfg(); const cands = []; const t0 = performance.now();
@@ -1912,6 +1936,16 @@
       const face = (latest && latest.face && !latest.multi) ? (latest.coverage||0) : 0;
       const fr = grab(null, { selfie:true });
       cands.push({ t: performance.now()-t0, sharp:q.sharp, luma:q.luma, face, fr });
+      // EARLY EXIT (snappier in good light): once we already hold `keep` quality
+      // frames that can be spaced >= gapMs apart, stop — no need to burn the full
+      // 20-frame / ~2s window. Poor light never satisfies this and runs to `count`.
+      if(i >= cfg.minCount - 1){
+        const reqFace = cands.some(c => c.face > 0);
+        const good = cands.filter(c => c.fr && c.fr.image_b64 && !c.fr.black
+          && c.sharp >= cfg.minSharp && c.luma >= cfg.minLuma && c.luma <= cfg.maxLuma
+          && (!reqFace || c.face >= cfg.minFace));
+        if(good.length >= cfg.keep && _spacedCount(good, cfg.gapMs) >= cfg.keep) break;
+      }
       await sleep(100);
     }
     // Only gate on face area when on-device detection actually saw a face at some
@@ -1961,15 +1995,18 @@
   }
 
   function grab(action, opts){
-    // TWO TIERS to minimise payload:
+    // TWO TIERS — balance detectability/quality against payload:
     //  • selfie (opts.selfie): the frame used for face-match + the server's single-frame
-    //    passive PAD (run on frames[0]) — keep it crisp (480x640 @ q0.82).
-    //  • proving frames (everything else): the multi-frame MOTION engine only needs a
-    //    detectable face + movement, and it upscales/pads server-side, so ship them
-    //    small (384x512 @ q0.55) — ~70% lighter than the old 480x640 @ q0.92.
+    //    passive PAD (run on frames[0]) — crisp portrait, 540x720 @ q0.85 (~70 KB).
+    //  • proving frames (everything else): MUST meet the Annex A2 resolution floor
+    //    (480x640) and be sharp enough for the server-side ACTION detector to see the
+    //    turn/blink — otherwise actions don't register (satisfied < required) and the
+    //    challenge fails. 480x640 @ q0.7 (~40 KB) is the floor that keeps detection
+    //    reliable while staying light; the 30-frame cap bounds total upload (~1.2 MB).
+    //    (Previously 384x512 @ q0.55 — below the gate + too soft -> flaky 1/3, 2/3.)
     const selfie = !!(opts && opts.selfie);
-    const W = selfie ? 480 : 384, H = selfie ? 640 : 512;
-    const q = selfie ? 0.82 : 0.55;
+    const W = selfie ? 720 : 480, H = selfie ? 960 : 640;   // selfie at 720p for crisp face-match frames
+    const q = selfie ? 0.86 : 0.7;
     const c=document.createElement("canvas"); c.width=W; c.height=H;
     const x=c.getContext("2d");
     // Aspect-preserving CENTER-CROP (cover), phones rarely deliver exactly 3:4,
@@ -2014,10 +2051,18 @@
     const payload = risk ? {...r, risk} : r;
     const _self = r.selfie_image || lastShapedImages.selfie_image || null;
     const _live = r.liveliness_images || lastShapedImages.liveliness_images || [];
-    // Surface images ONCE at the top level; strip the heavy duplicates from the nested
-    // `result` so the JSON handed to the native bridge stays small (images were echoed 3x:
-    // top-level + result.selfie/liveliness + result.best_face_image -> a multi-MB string
-    // can fail/truncate crossing the Android onResult / iOS postMessage bridge).
+    // DIAGNOSTIC beacon (no PII/no image data — just presence + sizes) so we can see,
+    // from the real device, whether images are attached at delivery time + the payload
+    // size (large payloads can hit native-bridge limits). Remove once confirmed.
+    try{ clientLog("result_images","info", "outcome="+r.outcome, {
+      outcome:r.outcome, sel: !!_self, sel_len: _self?(_self.image||"").length:0,
+      live_n: _live.length, r_sel: !!r.selfie_image, shaped_sel: !!lastShapedImages.selfie_image,
+      best_face: !!r.best_face_image }); }catch(_e){}
+    // Surface images ONCE at the top level. Strip the heavy duplicates from the nested
+    // `result` so the JSON handed to the native bridge stays small — a multi-MB string
+    // (images echoed 3x: top-level + result.selfie/liveliness + result.best_face_image)
+    // can fail/truncate crossing the Android onResult / iOS postMessage bridge, which
+    // looked like an "empty payload" to integrators. Engine fields are preserved.
     const leanResult = {...payload, best_face_image:null, selfie_image:null, liveliness_images:[]};
     postToHost({type:"liveness", outcome:r.outcome, is_live:r.is_live, score:r.score, took_ms:flowElapsed()||null,
       selfie_image: _self,
@@ -2076,6 +2121,59 @@
 
   const scopes=()=>[$("scope-device").checked?"device_signals":null,$("scope-loc").checked?"precise_location":null].filter(Boolean);
 
+  // ---- ACTIVE ILLUMINATION (anti-replay, iOS parity) --------------------
+  // Flash a RANDOM sequence of bright colours on the screen and check the face
+  // REFLECTS them: a real 3D face lit by the screen shifts its measured colour
+  // toward each flash; a printed photo or a SCREEN replaying a video shows its
+  // own content and does NOT track the random light. Returns an advisory score
+  // recorded on the decision (face_attributes.illumination); the screen is the
+  // light source, the front camera reads the face under it.
+  function _faceMeanRGB(){
+    const vw=video.videoWidth||64, vh=video.videoHeight||64;
+    const rw=vw*0.42, rh=vh*0.42, ox=(vw-rw)/2, oy=(vh-rh)/2;   // centred face region
+    const sc=_faceMeanRGB._c||(_faceMeanRGB._c=Object.assign(document.createElement("canvas"),{width:48,height:48}));
+    const sx=_faceMeanRGB._x||(_faceMeanRGB._x=sc.getContext("2d",{willReadFrequently:true}));
+    try{ sx.drawImage(video, ox,oy,rw,rh, 0,0,48,48); }catch(_e){ return [0,0,0]; }
+    const d=sx.getImageData(0,0,48,48).data; let r=0,g=0,b=0,n=0;
+    for(let i=0;i<d.length;i+=4){ r+=d[i]; g+=d[i+1]; b+=d[i+2]; n++; }
+    return [r/n, g/n, b/n];
+  }
+  async function illuminationChallenge(){
+    // Accessibility: skip the colour challenge for users who prefer reduced motion
+    // (photosensitivity). The server's passive PAD still covers replay there.
+    if(matchMedia("(prefers-reduced-motion: reduce)").matches) return { skipped:true, reason:"reduced-motion" };
+    const COLORS=[{n:"R",rgb:[255,45,45]},{n:"G",rgb:[40,255,90]},{n:"B",rgb:[70,100,255]},{n:"W",rgb:[255,255,255]}];
+    const seq=COLORS.slice().sort(()=>Math.random()-0.5);   // random order each run
+    let ov=$("illum");
+    if(!ov){ ov=document.createElement("div"); ov.id="illum";
+      ov.style.cssText="position:fixed;inset:0;z-index:9998;display:flex;align-items:flex-end;justify-content:center;padding-bottom:13vh;transition:background-color .07s linear";
+      const tip=document.createElement("div"); tip.id="illumTip";
+      tip.style.cssText="background:rgba(255,255,255,.92);color:#0f1b2d;padding:9px 18px;border-radius:999px;font:600 15px/1 system-ui;box-shadow:0 6px 20px rgba(0,0,0,.18)";
+      tip.textContent="Hold still — checking light"; ov.appendChild(tip); document.body.appendChild(ov); }
+    ov.style.display="flex"; const responses=[];
+    try{
+      for(const col of seq){
+        ov.style.backgroundColor=`rgb(${col.rgb[0]},${col.rgb[1]},${col.rgb[2]})`;
+        await sleep(matchMedia("(prefers-reduced-motion: reduce)").matches?180:240);  // let the screen light the face
+        responses.push({f:col.n, rgb:_faceMeanRGB()});
+      }
+    } finally { ov.style.display="none"; }
+    // Score: vs the WHITE (neutral) baseline, the flashed channel must CLEARLY
+    // DOMINATE — be the max delta AND lead the other channels by a margin. A real
+    // 3D face lit by the screen reflects the colour strongly; a printed photo or a
+    // screen REPLAYING a video barely moves (all channels shift together → no
+    // dominance), so it scores ~0. Margin makes random noise insufficient to pass.
+    const idx={R:0,G:1,B:2}, MARGIN=8; const white=responses.find(r=>r.f==="W");
+    let hits=0, tested=0;
+    if(white) for(const r of responses){ if(r.f==="W") continue; tested++;
+      const d=[r.rgb[0]-white.rgb[0], r.rgb[1]-white.rgb[1], r.rgb[2]-white.rgb[2]];
+      const fc=d[idx[r.f]], others=[0,1,2].filter(i=>i!==idx[r.f]).map(i=>d[i]);
+      if(fc===Math.max(...d) && (fc-Math.max(...others))>=MARGIN) hits++; }   // must clearly lead
+    const score=tested?hits/tested:0;
+    return { sequence:seq.map(c=>c.n), responses:responses.map(r=>({f:r.f,rgb:r.rgb.map(x=>Math.round(x))})),
+             score:Math.round(score*100)/100, passed:score>=0.66 };
+  }
+
   // ---- main flow --------------------------------------------------------
   // The Retry button is hidden during capture; it only appears when a retry is
   // actually needed (failed / referred / error).
@@ -2089,10 +2187,23 @@
     let portrait = null;   // hoisted so the catch can freeze the captured still
     let verifyMs = 0;      // /v1/verify server round-trip, shown on the result
     let lastShot = null;   // the FINAL frame the user saw (shown frozen on the result)
+    // WATCHDOG (iOS parity): the host ALWAYS gets a terminal result within ~90s,
+    // even if a phase hangs — so an integrator's callback never stalls forever.
+    _resultDelivered = false; clearTimeout(_watchdogTimer);
+    _watchdogTimer = setTimeout(()=>{
+      try{ clientLog("flow_watchdog","error","90s timeout"); }catch(_){}
+      postToHost({ type:"liveness", outcome:"error", is_live:false, score:null, error:"timeout",
+        message:"Verification timed out — please try again.",
+        selfie_image:(lastShapedImages&&lastShapedImages.selfie_image)||null,
+        liveliness_images:(lastShapedImages&&lastShapedImages.liveliness_images)||[] });
+      try{ $("ring").style.display="none"; hideCheck(); $("ovalbox").style.borderColor=COLOR.bad;
+        $("p-icon").textContent="⏱"; setPrompt("hold","Timed out"); $("p-label").textContent="";
+        $("p-hint").textContent="Verification timed out — please try again."; showRetry(); }catch(_){}
+    }, 90000);
     try{
       setPrompt("position"); setRing(0, COLOR.idle);
       // camera
-      const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:facingConstraint(),width:{ideal:720},height:{ideal:960}},audio:false});
+      const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:facingConstraint(),width:{ideal:960},height:{ideal:1280}},audio:false});
       video.srcObject=stream; await playVideoReliably(video);   // force playback -> no paused play-icon overlay
       setPrompt("position","Focusing…"); await settleFocus();   // wait for sharp focus -> far fewer PAD/quality false-fails
       startVideoRec(stream);   // capture the attempt for review evidence
@@ -2185,11 +2296,25 @@
       //    generated on-device and the server is contacted only at submit. Spoken
       //    methods need the server now (the phrase/number is server-issued).
       const offlineFlow = (chosenMethod==="face_liveness" || chosenMethod==="face_hybrid");
-      let consentId, req, challenge, deviceContext, qframes = [];
+      let consentId, req, challenge, deviceContext, qframes = [], illumResult = null;
+      let prefetchReq = null, attPromise = null;   // started at challenge time, awaited at submit
       if(offlineFlow){
         qframes = await captureQualityGated();   // 20 candidates -> top 5 sharpest, quality-gated
         portrait = qframes[0];
         challenge = makeClientChallenge();
+        // PERF: consent + device-context + request + attestation need NO frames — run them
+        // DURING the challenge (10-30s of head-turns) instead of serially after the ✓ appears.
+        // Previously this whole chain (2 round-trips + geo + up to 8s attestation) ran between
+        // "challenge done" and /verify — the user felt it as a long stall on the success mark.
+        prefetchReq = (async()=>{
+          const cid = await client.grantConsent({subjectId:$("subject").value, signalScopes:scopes()});
+          const dc = scopes().includes("device_signals")
+            ? await collectDeviceContext({collectPreciseLocation:scopes().includes("precise_location"),appVersion:"demo-2.0"}) : undefined;
+          if(dc) lastDeviceContext = dc;
+          return await client.openRequest({subjectId:$("subject").value, consentId:cid,
+            method:chosenMethod, deviceContext:dc});
+        })().catch(e=>({__err:e}));
+        attPromise = nativeAttestation(challenge.nonce);   // host bridge warms up in parallel
       } else {
         [qframes, consentId] = await Promise.all([
           captureQualityGated(),
@@ -2284,8 +2409,10 @@
           // Hold Still gate: one centred face, held unbroken (and auto-brightness).
           setSegment(0.12 + si*seg, seg);
           setPrompt("hold","Hold still");
-          frames.push(...await captureLook(1200));   // shorter Hold Still (was 2500) — snappier
+          frames.push(...await captureLook(650));   // shorter Hold Still (2500 -> 1200 -> 1000 -> 650) — snappier
           setRing(0.12+(si+1)*seg, COLOR.ok); si++;
+          // Active illumination (anti-replay) — face still + centred here. Advisory.
+          if(mpReady){ try{ assertPresence(); illumResult=await illuminationChallenge(); frames.push(grab("look")); }catch(_ie){ if(_ie&&_ie.presence) throw _ie; } }
           for(let i=0;i<actions.length;i++){
             const a=actions[i]; setSegment(0.12 + si*seg, seg);
             // "Get ready" beat: show the instruction + arrow, AND put the guide arc on
@@ -2335,7 +2462,7 @@
             setDir(null); setRing(0, COLOR.bad);
             const ob=$("ovalbox"); if(ob){ ob.style.borderColor="#e6eaed"; ob.style.boxShadow="none"; }
             setPrompt("hold","Face left the oval, starting over"); $("p-icon").textContent="";
-            await sleep(900); continue;
+            await sleep(300); continue;   // snappy restart back to Hold Still
           }
           throw e;   // genuine failure (e.g. action not caught) -> normal error path
          }
@@ -2352,18 +2479,30 @@
         // "connect to the internet" message rather than a raw fetch error.
         try{
           if(offlineFlow){
-            consentId = await client.grantConsent({subjectId:$("subject").value, signalScopes:scopes()});
-            deviceContext=scopes().includes("device_signals")
-              ? await collectDeviceContext({collectPreciseLocation:scopes().includes("precise_location"),appVersion:"demo-2.0"}) : undefined;
-            lastDeviceContext = deviceContext || lastDeviceContext;
-            req = await client.openRequest({subjectId:$("subject").value, consentId, method:chosenMethod, deviceContext});
+            // Prefetched during the challenge; on an early network blip retry ONCE now
+            // (connectivity is often back by submit).
+            req = prefetchReq ? await prefetchReq : null;
+            if(!req || req.__err || !req.request_id){
+              consentId = await client.grantConsent({subjectId:$("subject").value, signalScopes:scopes()});
+              deviceContext=scopes().includes("device_signals")
+                ? await collectDeviceContext({collectPreciseLocation:scopes().includes("precise_location"),appVersion:"demo-2.0"}) : undefined;
+              lastDeviceContext = deviceContext || lastDeviceContext;
+              req = await client.openRequest({subjectId:$("subject").value, consentId, method:chosenMethod, deviceContext});
+            }
           }
-          const attestationToken = await nativeAttestation(challenge.nonce);
-          frames = capFrames(frames, 30);   // server rejects > 30 frames (422)
+          // The token had the whole challenge to mint; give a straggler at most 1.5s more —
+          // the result must not wait on a slow host bridge (missing token = advisory).
+          const attestationToken = await Promise.race([
+            (attPromise || nativeAttestation(challenge.nonce)),
+            sleep(1500).then(()=>null),
+          ]);
+          // 12 frames (~500KB) is plenty for the server's motion + PAD verification — the old
+          // 30-frame cap pushed 1.5-2.5MB uploads that dominated the wait on mobile links.
+          frames = capFrames(frames, 12);
           lastShapedImages = shapeFrames(frames);   // images guaranteed to the host on ANY outcome (success / error / queued)
           result = await client.verify({requestId:req.request_id, challenge, frames, videoB64, attestationToken,
             clientActions: offlineFlow ? challenge.actions : undefined,
-            faceAttributes: lastFaceAttrs,     // §2.6 on-device geometry
+            faceAttributes: illumResult ? {...(lastFaceAttrs||{}), illumination: illumResult} : lastFaceAttrs,   // §2.6 geometry + active-illumination anti-replay
             padStrict: strictness==="strict"});  // strict profile -> server PAD model gates
         }catch(err){
           if(isOffline(err)){
@@ -2451,6 +2590,7 @@
             error: offline ? "offline" : String(e&&(e.message||e)).slice(0,300),
             error_code: offline ? "offline" : "verify_failed",
             took_ms: flowElapsed()||null,
+            // Still hand back whatever we captured, so an error doesn't strand the dev with no frames.
             selfie_image: lastShapedImages.selfie_image || null,
             liveliness_images: lastShapedImages.liveliness_images || [],
             device: lastDeviceContext?.device||null, network: lastDeviceContext?.network||null,
@@ -2722,6 +2862,7 @@
   const _icDoc=`<svg viewBox="0 0 24 24" fill="none" stroke="#23282d" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="2"/><circle cx="9" cy="9" r="2.1"/><path d="M14 8h3M14 11h3M6.4 14.4c.6-1.3 4.3-1.3 4.9 0M7 18h10"/></svg>`;
 
   function routeFlow(flow){
+    _resultDelivered = false; clearTimeout(_watchdogTimer);   // fresh run -> allow a terminal result
     flowMode=flow; chosenLookup="none"; chosenIdKind="";
     if(flow==="enroll"){   // fresh enrol → reset the escalation counters
       enrollFails=0; enrollReviewMode=false; chosenMethod = CONFIG.behavior.method || "face_liveness"; }
