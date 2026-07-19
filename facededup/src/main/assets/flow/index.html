@@ -804,7 +804,7 @@
     (e.message||"")+" @ "+((e.filename||"").split("/").pop())+":"+(e.lineno||"")));
   window.addEventListener("unhandledrejection", e=> clientLog("unhandledrejection","error",
     String((e.reason&&(e.reason.stack||e.reason.message))||e.reason)));
-  const DEMO_BUILD = "2026-07-19-demo2-govid";   // bump each demo deploy -> proves which build a device actually runs
+  const DEMO_BUILD = "2026-07-19-settings-toggle-fix";   // bump each demo deploy -> proves which build a device actually runs
   // SECURITY (VAPT F3): never log the license key, redact it from the query string.
   const _safeSearch = (location.search||"").replace(/(license|apiBase)=[^&]*/gi, "$1=REDACTED").slice(0,200);
   clientLog("session","info","demo loaded "+DEMO_BUILD, {build: DEMO_BUILD, search:_safeSearch});
@@ -2921,7 +2921,10 @@
     if(flow==="authenticate") return showAuthScreen();   // Face + ID, or Face only
     if(flow==="address") return showAddrScreen();        // address + on-site GPS
   }
-  document.querySelectorAll('#select .opt').forEach(btn=>btn.onclick=()=>routeFlow(btn.dataset.flow));
+  // Only the real flow options (data-flow) route; the Settings toggle (#toptsToggle) is a
+  // .opt too but has NO data-flow — binding it here would OVERWRITE its own expand handler
+  // (this runs after it) and clicking Settings would call routeFlow(undefined) = do nothing.
+  document.querySelectorAll('#select .opt[data-flow]').forEach(btn=>btn.onclick=()=>routeFlow(btn.dataset.flow));
   // Tester options: liveness strictness + agent mode (rear camera).
   const STRICT_HINT = { lenient:"Lenient, quick, easiest to pass.",
     standard:"Standard, balanced for real use.",
