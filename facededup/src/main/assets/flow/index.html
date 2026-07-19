@@ -799,7 +799,7 @@
     (e.message||"")+" @ "+((e.filename||"").split("/").pop())+":"+(e.lineno||"")));
   window.addEventListener("unhandledrejection", e=> clientLog("unhandledrejection","error",
     String((e.reason&&(e.reason.stack||e.reason.message))||e.reason)));
-  const DEMO_BUILD = "2026-07-19-fastload-arc-signals";   // bump each demo deploy -> proves which build a device actually runs
+  const DEMO_BUILD = "2026-07-19-samescreen-illum";   // bump each demo deploy -> proves which build a device actually runs
   // SECURITY (VAPT F3): never log the license key, redact it from the query string.
   const _safeSearch = (location.search||"").replace(/(license|apiBase)=[^&]*/gi, "$1=REDACTED").slice(0,200);
   clientLog("session","info","demo loaded "+DEMO_BUILD, {build: DEMO_BUILD, search:_safeSearch});
@@ -2170,22 +2170,38 @@
     // Accessibility: skip the colour challenge for users who prefer reduced motion
     // (photosensitivity). The server's passive PAD still covers replay there.
     if(matchMedia("(prefers-reduced-motion: reduce)").matches) return { skipped:true, reason:"reduced-motion" };
+    // DARK-GATED: the flashes only run when the face actually reads as under-lit —
+    // a well-lit face doesn't need the fill-light, and skipping keeps the flow fast.
+    // (Advisory signal either way; the server's passive PAD covers replay.)
+    const _luma = frameStats().luma;
+    if(_luma >= 110) return { skipped:true, reason:"well_lit", luma:Math.round(_luma) };
     const COLORS=[{n:"R",rgb:[255,45,45]},{n:"G",rgb:[40,255,90]},{n:"B",rgb:[70,100,255]},{n:"W",rgb:[255,255,255]}];
     const seq=COLORS.slice().sort(()=>Math.random()-0.5);   // random order each run
+    // SAME-SCREEN wash (no separate screen): the flash layer sits UNDER the capture UI —
+    // the camera oval, ring and instructions are raised above it, so the preview, the
+    // face oval and the prompts all stay visible while the rest of the screen emits the
+    // colour. Mirrors the native SDKs ("the card flashes; the oval stays live").
     let ov=$("illum");
     if(!ov){ ov=document.createElement("div"); ov.id="illum";
-      ov.style.cssText="position:fixed;inset:0;z-index:9998;display:flex;align-items:flex-end;justify-content:center;padding-bottom:13vh;transition:background-color .07s linear";
-      const tip=document.createElement("div"); tip.id="illumTip";
-      tip.style.cssText="background:rgba(255,255,255,.92);color:#0f1b2d;padding:9px 18px;border-radius:999px;font:600 15px/1 system-ui;box-shadow:0 6px 20px rgba(0,0,0,.18)";
-      tip.textContent="Hold still — checking light"; ov.appendChild(tip); document.body.appendChild(ov); }
-    ov.style.display="flex"; const responses=[];
+      ov.style.cssText="position:fixed;inset:0;z-index:9998;transition:background-color .07s linear;pointer-events:none";
+      document.body.appendChild(ov); }
+    const raised=[document.querySelector(".ring-wrap"), document.querySelector(".ptop"), $("p-hint")].filter(Boolean);
+    const prevPos=raised.map(el=>[el.style.position, el.style.zIndex]);
+    raised.forEach(el=>{ el.style.position="relative"; el.style.zIndex="9999"; });
+    const prevHint=$("p-hint")?$("p-hint").textContent:null;
+    if($("p-hint")) $("p-hint").textContent="Hold still — checking light";
+    ov.style.display="block"; const responses=[];
     try{
       for(const col of seq){
         ov.style.backgroundColor=`rgb(${col.rgb[0]},${col.rgb[1]},${col.rgb[2]})`;
-        await sleep(matchMedia("(prefers-reduced-motion: reduce)").matches?180:240);  // let the screen light the face
+        await sleep(240);                              // let the screen light the face
         responses.push({f:col.n, rgb:_faceMeanRGB()});
       }
-    } finally { ov.style.display="none"; }
+    } finally {
+      ov.style.display="none"; ov.style.backgroundColor="transparent";
+      raised.forEach((el,i)=>{ el.style.position=prevPos[i][0]; el.style.zIndex=prevPos[i][1]; });
+      if($("p-hint") && prevHint!==null) $("p-hint").textContent=prevHint;
+    }
     // Score: vs the WHITE (neutral) baseline, the flashed channel must CLEARLY
     // DOMINATE — be the max delta AND lead the other channels by a margin. A real
     // 3D face lit by the screen reflects the colour strongly; a printed photo or a
