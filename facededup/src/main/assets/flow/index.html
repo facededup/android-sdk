@@ -660,7 +660,8 @@
   // chooser (?flow=select) and other explicit flows are left alone.
   try{
     const _fl = new URLSearchParams(location.search).get("flow");
-    if(!_fl || _fl === "liveness"){
+    // /demo2 boots into the Government-ID + Face journey, not straight-to-camera.
+    if(!location.pathname.startsWith("/demo2") && (!_fl || _fl === "liveness")){
       const _g=id=>document.getElementById(id), _q=s=>document.querySelector(s);
       if(_g("stage"))  _g("stage").style.display="block";
       if(_g("select")) _g("select").style.display="none";
@@ -708,6 +709,9 @@
   function _urlConfig(){
     const p = new URLSearchParams(location.search); const c = { behavior:{}, ui:{}, branding:{}, api:{} };
     const truthy = v => v==="1" || v==="true" || v==="yes";
+    // /demo2 = the Government-ID + Face demo: default straight into the validate
+    // journey (country -> ID -> face). An explicit ?flow= still wins.
+    if(location.pathname.startsWith("/demo2")) c.behavior.flow = "validate";
     if(p.has("flow"))       c.behavior.flow = p.get("flow");
     if(p.has("method"))     c.behavior.method = p.get("method");
     if(p.has("strictness")) c.behavior.strictness = p.get("strictness");
@@ -800,7 +804,7 @@
     (e.message||"")+" @ "+((e.filename||"").split("/").pop())+":"+(e.lineno||"")));
   window.addEventListener("unhandledrejection", e=> clientLog("unhandledrejection","error",
     String((e.reason&&(e.reason.stack||e.reason.message))||e.reason)));
-  const DEMO_BUILD = "2026-07-19-ninauth-oneword";   // bump each demo deploy -> proves which build a device actually runs
+  const DEMO_BUILD = "2026-07-19-demo2-govid";   // bump each demo deploy -> proves which build a device actually runs
   // SECURITY (VAPT F3): never log the license key, redact it from the query string.
   const _safeSearch = (location.search||"").replace(/(license|apiBase)=[^&]*/gi, "$1=REDACTED").slice(0,200);
   clientLog("session","info","demo loaded "+DEMO_BUILD, {build: DEMO_BUILD, search:_safeSearch});
