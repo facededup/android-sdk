@@ -6,6 +6,9 @@
   <title>Facededup Liveness</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <!-- warm the TLS for the heavy face-engine hosts (9MB wasm + 3MB model) before they're fetched -->
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+  <link rel="preconnect" href="https://swiftend-assets-348761024048.s3.eu-west-2.amazonaws.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Epilogue:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="icon" type="image/png" href="./assets/icon-192.png" />
   <link rel="apple-touch-icon" href="./assets/apple-touch-icon.png" />
@@ -578,7 +581,7 @@
     <h2 class="cs-title">Verify your identity</h2>
     <p class="cs-sub">You'll take a quick selfie to confirm you're the owner of this identity, processed securely by Facededup (NDPA-aligned).</p>
     <div class="cs-illus" aria-hidden="true">
-      <video class="cs-vid" autoplay loop muted playsinline preload="auto"
+      <video class="cs-vid" autoplay loop muted playsinline preload="none"
              poster="./assets/face-anim-poster.jpg">
         <source src="./assets/face-anim.mp4" type="video/mp4">
       </video>
@@ -796,7 +799,7 @@
     (e.message||"")+" @ "+((e.filename||"").split("/").pop())+":"+(e.lineno||"")));
   window.addEventListener("unhandledrejection", e=> clientLog("unhandledrejection","error",
     String((e.reason&&(e.reason.stack||e.reason.message))||e.reason)));
-  const DEMO_BUILD = "2026-07-19-ninauth-mark";   // bump each demo deploy -> proves which build a device actually runs
+  const DEMO_BUILD = "2026-07-19-fastload-arc-signals";   // bump each demo deploy -> proves which build a device actually runs
   // SECURITY (VAPT F3): never log the license key, redact it from the query string.
   const _safeSearch = (location.search||"").replace(/(license|apiBase)=[^&]*/gi, "$1=REDACTED").slice(0,200);
   clientLog("session","info","demo loaded "+DEMO_BUILD, {build: DEMO_BUILD, search:_safeSearch});
@@ -1827,8 +1830,11 @@
       const col = (wrong && p<0.6) ? COLOR.bad : COLOR.active;
       const bad = (col===COLOR.bad);
       if(dirDeg!=null){
-        // Directional (left / right / up): a growing arc ON the side to move toward.
-        setRing(0.16 + p*0.30, col, dirDeg);
+        // NATIVE-PARITY arc (matches the iOS/Android native SDKs): the side arc starts
+        // EMPTY and fills with LIVE detection progress to ~1/3 of the perimeter (the
+        // native 110° sweep); a WRONG move resets it to empty — the arc is feedback,
+        // not a countdown.
+        setRing(bad ? 0.03 : 0.03 + p*0.29, col, dirDeg);
         if(o){ o.style.boxShadow = bad ? `0 0 22px ${COLOR.bad}` : "none";
                o.style.borderColor = bad ? COLOR.bad : "#e6eaed"; }
       } else {
@@ -3634,7 +3640,14 @@
       // Never dead-end an SDK launch on a route error, retry into the camera.
       if(_nativeSDK){ try{ showStage(); runFlow(); }catch(_2){ showSelect(); } } else { showSelect(); } }
   }
-  (NATIVE_DETECT ? Promise.resolve() : IS_IOS ? preloadMPWorker() : preloadMP()).catch(()=>{});   // warm the face engine immediately (native Vision / Worker on iOS)
+  // Warm the face engine AFTER first paint settles — the 9MB WASM + 3MB model competed with
+  // the initial render and made the page feel slow to load; deferring to idle keeps the UI
+  // instant while the engine still finishes warming long before the user reaches the camera.
+  {
+    const warm = () => (NATIVE_DETECT ? Promise.resolve() : IS_IOS ? preloadMPWorker() : preloadMP()).catch(()=>{});
+    if ("requestIdleCallback" in window) requestIdleCallback(warm, { timeout: 2500 });
+    else setTimeout(warm, 1200);
+  }
   $("start").textContent = "Retry";
   $("start").onclick = () => { if(chosenMethod==="assisted") runAssisted(); else runFlow(); };
 </script>

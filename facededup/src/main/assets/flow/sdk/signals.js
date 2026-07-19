@@ -8,7 +8,7 @@
 //      package name, app hash, hardware attestation, carrier, VPN…), injected by the
 //      native SDK at document-start as `window.__FACEDEDUP_NATIVE_SIGNALS`
 //      ({ device?, network? }). Native fields override/extend the browser ones.
-const SDK_VERSION = "1.3.2";
+const SDK_VERSION = "1.3.7";
 /** Native-injected signals (set by the Android/iOS SDK before the flow runs). */
 function nativeSignals() {
     try {
@@ -51,6 +51,29 @@ function screenRefreshRate() {
         }
     });
 }
+/** Camera count via enumerateDevices — 0 on a device claiming to do liveness is the classic
+ *  virtual-camera / injection tell (mirrors the native SDK's num_cameras signal). */
+async function cameraCount() {
+    try {
+        const devs = await navigator.mediaDevices?.enumerateDevices?.();
+        if (!devs)
+            return undefined;
+        return devs.filter((d) => d.kind === "videoinput").length;
+    }
+    catch {
+        return undefined;
+    }
+}
+/** Battery level (0..1) — parity with the native SDK's battery_level. */
+async function batteryLevel() {
+    try {
+        const b = await navigator.getBattery?.();
+        return typeof b?.level === "number" ? b.level : undefined;
+    }
+    catch {
+        return undefined;
+    }
+}
 async function deviceSignals(opts) {
     const nav = navigator;
     let model;
@@ -73,7 +96,9 @@ async function deviceSignals(opts) {
     }
     const dpr = window.devicePixelRatio || 1;
     const heap = performance.memory;
-    const refresh = await screenRefreshRate();
+    const [refresh, numCameras, battery] = await Promise.all([
+        screenRefreshRate(), cameraCount(), batteryLevel(),
+    ]);
     const native = nativeSignals().device || {};
     return {
         platform: "web",
@@ -95,6 +120,15 @@ async function deviceSignals(opts) {
         languages: (navigator.languages || []).slice(0, 5).join(","),
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         timezone_offset_minutes: -new Date().getTimezoneOffset(), // +60 = UTC+1
+        // Native-parity fraud signals (browser edition):
+        num_cameras: numCameras, // 0 => virtual-camera / injection tell (server rule)
+        battery_level: battery,
+        cpu_cores: navigator.hardwareConcurrency,
+        max_touch_points: navigator.maxTouchPoints, // 0 on a "phone" UA = emulation tell
+        // Automation/RASP-ish: headless & driver detection — the browser's closest
+        // equivalent of the native debugger/hooks scan. Fail-open booleans.
+        is_webdriver: navigator.webdriver === true || undefined,
+        is_headless_ua: /HeadlessChrome|PhantomJS|Electron/i.test(navigator.userAgent) || undefined,
         // Browser can't see emulator/root/debugger/Build.*/package/app-hash — the native
         // SDK injects them via __FACEDEDUP_NATIVE_SIGNALS (merged last, so it wins).
         ...native,
