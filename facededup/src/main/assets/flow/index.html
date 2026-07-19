@@ -92,8 +92,9 @@
     @keyframes gpulse{ 0%,80%,100%{ transform:scale(.6); opacity:.3; } 40%{ transform:scale(1); opacity:1; } }
     .controls{ margin-top:18px; display:flex; flex-direction:column; gap:10px; }
     /* NINAuth brand footer — deliberately tiny + quiet */
-    .ninauth-mark{ display:flex; align-items:center; justify-content:center; gap:4px;
+    .ninauth-mark{ display:flex; align-items:center; justify-content:center;
       margin-top:14px; opacity:.72; user-select:none; }
+    .ninauth-mark svg{ margin-right:4px; }   /* space after the badge ONLY — "NINAuth" is one word */
     .ninauth-mark .nin{ font-weight:700; font-size:11px; color:#17a05d; letter-spacing:.2px; }
     .ninauth-mark .auth{ font-weight:700; font-size:11px; color:#17222e; letter-spacing:.2px; }
     button{ font:inherit; font-weight:700; padding:14px; border-radius:14px; border:0;
@@ -799,7 +800,7 @@
     (e.message||"")+" @ "+((e.filename||"").split("/").pop())+":"+(e.lineno||"")));
   window.addEventListener("unhandledrejection", e=> clientLog("unhandledrejection","error",
     String((e.reason&&(e.reason.stack||e.reason.message))||e.reason)));
-  const DEMO_BUILD = "2026-07-19-samescreen-illum";   // bump each demo deploy -> proves which build a device actually runs
+  const DEMO_BUILD = "2026-07-19-ninauth-oneword";   // bump each demo deploy -> proves which build a device actually runs
   // SECURITY (VAPT F3): never log the license key, redact it from the query string.
   const _safeSearch = (location.search||"").replace(/(license|apiBase)=[^&]*/gi, "$1=REDACTED").slice(0,200);
   clientLog("session","info","demo loaded "+DEMO_BUILD, {build: DEMO_BUILD, search:_safeSearch});
